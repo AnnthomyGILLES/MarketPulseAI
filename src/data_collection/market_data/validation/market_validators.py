@@ -2,7 +2,9 @@
 Validators for market data.
 """
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
+
+from pydantic import ValidationError
 
 from src.data_collection import logger
 from src.data_collection.market_data.validation import BaseValidator
@@ -34,13 +36,6 @@ class MarketDataValidator(BaseValidator):
         Returns:
             Tuple of (is_valid, error_message)
         """
-        # Check for missing required fields
-        if not data.symbol:
-            return False, "Symbol is required"
-        
-        if data.timestamp <= 0:
-            return False, "Invalid timestamp"
-        
         # Validate price ranges
         if not (self.min_price <= data.open_price <= self.max_price):
             return False, f"Open price {data.open_price} out of range [{self.min_price}, {self.max_price}]"
@@ -55,6 +50,8 @@ class MarketDataValidator(BaseValidator):
             return False, f"Close price {data.close_price} out of range [{self.min_price}, {self.max_price}]"
         
         # Validate price relationships
+        # Note: Some of these are already handled by Pydantic validators in the model
+        # But we'll keep them here for completeness and in case the model validation is bypassed
         if data.low_price > data.high_price:
             return False, f"Low price {data.low_price} greater than high price {data.high_price}"
         
@@ -68,4 +65,21 @@ class MarketDataValidator(BaseValidator):
         if data.volume < 0:
             return False, f"Negative volume {data.volume}"
         
-        return True, None 
+        return True, None
+    
+    @staticmethod
+    def validate_dict(data_dict: Dict[str, Any]) -> Tuple[bool, Optional[str], Optional[MarketData]]:
+        """
+        Validate a dictionary and convert it to a MarketData object if valid.
+        
+        Args:
+            data_dict: Dictionary containing market data
+            
+        Returns:
+            Tuple of (is_valid, error_message, market_data_object)
+        """
+        try:
+            market_data = MarketData(**data_dict)
+            return True, None, market_data
+        except ValidationError as e:
+            return False, str(e), None 
