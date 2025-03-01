@@ -15,6 +15,9 @@ from src.data_collection import (
 from src.data_collection.market_data.collectors.yfinance_collector import YFinanceCollector
 from src.data_collection.market_data.parsers.yfinance_parser import YFinanceParser
 from src.data_collection.market_data.validation.market_validators import MarketDataValidator
+from src.data_collection.social_data.collectors.twitter_collector import TwitterCollector
+from src.data_collection.social_data.parsers.twitter_parser import TwitterParser
+from src.data_collection.social_data.validation.social_validators import TwitterValidator
 from src.data_collection.models import MarketData, SocialMediaData, NewsData
 
 
@@ -98,10 +101,33 @@ class DataCollectionManager:
         self.market_parser = YFinanceParser()
         self.market_validator = MarketDataValidator()
         
+        # Initialize Twitter data components
+        self.twitter_collector = TwitterCollector()
+        self.twitter_parser = TwitterParser(extract_symbols_func=self._extract_stock_symbols_from_text)
+        self.twitter_validator = TwitterValidator()
+        
         # Initialize collection threads
         self.collection_threads = {}
         
         logger.info(f"Initialized DataCollectionManager with interval: {collection_interval} seconds")
+    
+    def _extract_stock_symbols_from_text(self, text: str) -> List[str]:
+        """
+        Extract potential stock symbols from text.
+        
+        Args:
+            text: Text to extract symbols from
+            
+        Returns:
+            List of potential stock symbols
+        """
+        from src.data_collection import STOCK_SYMBOLS
+        
+        words = text.upper().split()
+        # Simple heuristic: symbols are all caps between 1-5 letters
+        potential_symbols = [word for word in words if word.isalpha() and 1 <= len(word) <= 5]
+        # Filter to only include known symbols
+        return [symbol for symbol in potential_symbols if symbol in STOCK_SYMBOLS]
 
     def _market_data_collection_job(self) -> None:
         """Job function for collecting market data."""
@@ -140,6 +166,43 @@ class DataCollectionManager:
 
             # Sleep until next collection cycle
             time.sleep(self.collection_interval)
+    
+    def _twitter_data_collection_job(self) -> None:
+        """Job function for collecting Twitter data."""
+        while self.running:
+            try:
+                logger.info("Starting Twitter data collection cycle")
+                
+                # Collect raw data for all search terms
+                raw_data_batch = self.twitter_collector.collect_all()
+                
+                # Parse all tweets
+                all_tweets = []
+                for search_term, raw_data in raw_data_batch.items():
+                    try:
+                        tweets = self.twitter_parser.parse(raw_data)
+                        all_tweets.extend(tweets)
+                    except Exception as e:
+                        logger.error(f"Error parsing tweets for search term '{search_term}': {e}")
+                
+                # Validate tweets
+                validation_results = self.twitter_validator.validate_batch(all_tweets)
+                valid_tweets = validation_results['valid']
+                
+                # Log validation failures
+                for invalid_tweet, error in validation_results['invalid']:
+                    logger.warning(f"Invalid tweet {invalid_tweet.post_id}: {error}")
+                
+                # Publish valid tweets to Kafka
+                for tweet in valid_tweets:
+                    self.kafka_publisher.publish_social_data(tweet)
+                
+                logger.info(f"Completed Twitter data collection cycle. Collected {len(valid_tweets)} valid tweets.")
+            except Exception as e:
+                logger.error(f"Error in Twitter data collection job: {e}")
+
+            # Sleep until next collection cycle - collect less frequently than market data
+            time.sleep(self.collection_interval * 5)
 
     def start_collection(self) -> None:
         """Start the data collection process for all sources."""
@@ -153,7 +216,11 @@ class DataCollectionManager:
         self.collection_threads['market'] = threading.Thread(target=self._market_data_collection_job)
         self.collection_threads['market'].start()
         
-        # Add more collection threads for social media and news here
+        # Start Twitter collection thread
+        self.collection_threads['twitter'] = threading.Thread(target=self._twitter_data_collection_job)
+        self.collection_threads['twitter'].start()
+        
+        # Add more collection threads for Reddit and news here
         
         logger.info("Data collection process started")
     
