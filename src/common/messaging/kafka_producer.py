@@ -6,7 +6,7 @@ from kafka import KafkaProducer
 from kafka.errors import KafkaError
 from loguru import logger
 
-from common.kafka_utils.serializers import serialize_message
+from src.common.messaging.serializers import serialize_message
 
 
 class KafkaProducerWrapper:

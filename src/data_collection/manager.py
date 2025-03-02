@@ -15,6 +15,7 @@ from src.data_collection import (
 from src.data_collection.market_data.collectors.yfinance_collector import YFinanceCollector
 from src.data_collection.market_data.parsers.yfinance_parser import YFinanceParser
 from src.data_collection.market_data.validation.market_validators import MarketDataValidator
+from src.data_collection.market_data.validation.yfinance_validator import YFinanceValidator
 from src.data_collection.social_data.collectors.twitter_collector import TwitterCollector
 from src.data_collection.social_data.parsers.twitter_parser import TwitterParser
 from src.data_collection.social_data.validation.social_validators import TwitterValidator
@@ -99,7 +100,7 @@ class DataCollectionManager:
         # Initialize market data components
         self.market_collector = YFinanceCollector()
         self.market_parser = YFinanceParser()
-        self.market_validator = MarketDataValidator()
+        self.market_validator = YFinanceValidator()
         
         # Initialize Twitter data components
         self.twitter_collector = TwitterCollector()
@@ -142,6 +143,12 @@ class DataCollectionManager:
                 parsed_data = []
                 for symbol in self.market_collector.symbols:
                     try:
+                        # Validate raw data before parsing
+                        is_valid, error = self.market_validator.validate_raw_data(raw_data, symbol)
+                        if not is_valid:
+                            logger.warning(f"Invalid raw data for {symbol}: {error}")
+                            continue
+                            
                         market_data = self.market_parser.parse(raw_data, symbol)
                         if market_data:
                             parsed_data.append(market_data)
