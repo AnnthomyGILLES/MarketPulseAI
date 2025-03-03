@@ -13,6 +13,7 @@ tweepy = {extras = ["async"], version = "^4.15.0"}
 kafka-python = "^2.0.5"
 loguru = "^0.7.3"
 pyspark = "^3.5.5"
+ruff = "^0.9.9"
 
 
 [build-system]
