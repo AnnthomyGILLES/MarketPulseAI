@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "marketpulseai"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+yfinance = "^0.2.54"
+pydantic = "^2.10.6"
+tweepy = {extras = ["async"], version = "^4.15.0"}
+kafka-python = "^2.0.5"
+loguru = "^0.7.3"
+pyspark = "^3.5.5"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
