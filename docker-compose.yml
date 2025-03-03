@@ -1,0 +1,109 @@
+services:
+  redpanda:
+    image: redpandadata/redpanda:latest
+    command:
+      - redpanda start
+      - --smp 2
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9093
+      - --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9093
+      - --memory 4G
+    ports:
+      - "9093:9093"
+      - "29092:29092"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    networks:
+      - kafka-network
+    deploy:
+      resources:
+        limits:
+          memory: 6G
+        reservations:
+          memory: 3G
+
+  cassandra:
+    image: cassandra:latest
+    ports:
+      - "9042:9042"
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+      - ./config/database:/config/database
+    environment:
+      - CASSANDRA_CLUSTER_NAME=market_data_cluster
+      - CASSANDRA_ENDPOINT_SNITCH=SimpleSnitch
+      - CASSANDRA_DC=datacenter1
+      - MAX_HEAP_SIZE=2G
+      - HEAP_NEWSIZE=512M
+    networks:
+      - kafka-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  cassandra-init:
+    image: cassandra:latest
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    volumes:
+      - ./config/database:/config/database
+    command: /bin/bash -c "cqlsh cassandra -f /config/database/cassandra_schema.cql"
+    networks:
+      - kafka-network
+    restart: on-failure
+
+  spark:
+    image: bitnami/spark:3.5
+    environment:
+      - SPARK_MODE=master
+      - SPARK_MASTER_URL=spark://spark:7077
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    #      - SPARK_WORKER_MEMORY=8g
+    ports:
+      - "8090:8080"
+      - "7077:7077"
+    volumes:
+      - spark-volume:/bitnami
+    networks:
+      - kafka-network
+    deploy:
+      resources:
+        limits:
+          memory: 10G
+        reservations:
+          memory: 8G
+    depends_on:
+      - redpanda
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:latest
+    ports:
+      - "8081:8080"
+    environment:
+      - KAFKA_BROKERS=redpanda:29092
+    depends_on:
+      - redpanda
+    networks:
+      - kafka-network
+
+volumes:
+  redpanda-data:
+  spark-volume:
+  cassandra-data:
+
+networks:
+  kafka-network:
+    driver: bridge
