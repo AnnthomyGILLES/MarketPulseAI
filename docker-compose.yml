@@ -62,31 +62,43 @@ services:
       - kafka-network
     restart: on-failure
 
+  # Single Spark dev container with all components
   spark:
-    image: bitnami/spark:3.5
+    image: bitnami/spark:latest
+    ports:
+      - "8090:8080"  # Spark UI
+      - "7077:7077"  # Spark master port
+      - "4040:4040"  # Application UI
+    volumes:
+      - ./src:/opt/bitnami/spark/src
+      - ./config:/opt/bitnami/spark/config
+      - ./scripts:/opt/bitnami/spark/scripts
+      - spark-volume:/bitnami
     environment:
       - SPARK_MODE=master
-      - SPARK_MASTER_URL=spark://spark:7077
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
-    #      - SPARK_WORKER_MEMORY=8g
-    ports:
-      - "8090:8080"
-      - "7077:7077"
-    volumes:
-      - spark-volume:/bitnami
+      - KAFKA_BOOTSTRAP_SERVERS=redpanda:9093
+      - MARKET_DATA_TOPIC=market_data
+      - CASSANDRA_HOST=cassandra
+      - CASSANDRA_PORT=9042
+      - CASSANDRA_USER=cassandra
+      - CASSANDRA_PASSWORD=cassandra
     networks:
       - kafka-network
-    deploy:
-      resources:
-        limits:
-          memory: 10G
-        reservations:
-          memory: 8G
     depends_on:
       - redpanda
+      - cassandra
+    command: >
+      bash -c "
+        echo 'Setting up development environment...' &&
+        pip install pyspark kafka-python cassandra-driver pandas matplotlib jupyter yfinance &&
+        mkdir -p /tmp/checkpoints &&
+        chmod 777 /tmp/checkpoints &&
+        echo 'Spark development environment ready!' &&
+        echo 'Run your script manually with:' &&
+        echo '/opt/bitnami/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.3.0,com.datastax.spark:spark-cassandra-connector_2.12:3.3.0 /opt/bitnami/spark/src/data_processing/market_data/feature_eng/stock_features.py' &&
+        tail -f /dev/null
+      "
+
 
   redpanda-console:
     image: docker.redpanda.com/redpandadata/console:latest
