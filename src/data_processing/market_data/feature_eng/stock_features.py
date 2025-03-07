@@ -1,23 +1,29 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
-from pyspark.sql.types import TimestampType, StructField, DoubleType, LongType
-from pyspark.sql.window import Window
-import logging
-from src.data_collection import (
-    MARKET_DATA_TOPIC,
-    CASSANDRA_HOST,
-    CASSANDRA_PORT,
-    CASSANDRA_USER,
-    CASSANDRA_PASSWORD,
-    STOCK_SYMBOLS,
-    KAFKA_BOOTSTRAP_SERVERS,
+from pyspark.sql.types import (
+    TimestampType,
+    StructType,
+    StructField,
+    DoubleType,
+    LongType,
+    StringType,
 )
+import logging
+import os
 
 # Set up logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Environment variables with defaults
+KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "redpanda:9093")
+MARKET_DATA_TOPIC = os.environ.get("MARKET_DATA_TOPIC", "market_data")
+CASSANDRA_HOST = os.environ.get("CASSANDRA_HOST", "cassandra")
+CASSANDRA_PORT = os.environ.get("CASSANDRA_PORT", "9042")
+CASSANDRA_USER = os.environ.get("CASSANDRA_USER", "cassandra")
+CASSANDRA_PASSWORD = os.environ.get("CASSANDRA_PASSWORD", "cassandra")
 
 
 class StockDataProcessor:
@@ -35,19 +41,7 @@ class StockDataProcessor:
         cassandra_keyspace="market_data",
         cassandra_table="stock_features",
     ):
-        """Initialize the StockDataProcessor with configuration parameters.
-
-        Args:
-            kafka_brokers: Kafka broker addresses (default: from config)
-            kafka_topic: Kafka topic to consume from (default: from config)
-            cassandra_host: Cassandra host address (default: from config)
-            cassandra_port: Cassandra port (default: from config)
-            cassandra_user: Cassandra username (default: from config)
-            cassandra_password: Cassandra password (default: from config)
-            checkpoint_dir: Directory for Spark checkpoints
-            cassandra_keyspace: Cassandra keyspace name (default: 'market_data')
-            cassandra_table: Cassandra table name (default: 'stock_features')
-        """
+        """Initialize the StockDataProcessor with configuration parameters."""
         self.kafka_brokers = kafka_brokers
         self.kafka_topic = kafka_topic
         self.cassandra_host = cassandra_host
@@ -58,7 +52,6 @@ class StockDataProcessor:
         self.cassandra_keyspace = cassandra_keyspace
         self.cassandra_table = cassandra_table
         self.spark = self._init_spark()
-        self.stock_symbols = STOCK_SYMBOLS
 
         # Define schema for stock data
         self.stock_schema = StructType(
@@ -75,12 +68,21 @@ class StockDataProcessor:
 
     def _init_spark(self):
         """Initialize the Spark session with required configurations."""
+        logger.info(f"Initializing Spark with Cassandra host: {self.cassandra_host}")
+
+        # Add required JARs for Spark to connect to Kafka and Cassandra
         spark_builder = (
             SparkSession.builder.appName("StockDataProcessing")
             .config("spark.cassandra.connection.host", self.cassandra_host)
             .config("spark.cassandra.connection.port", self.cassandra_port)
             .config("spark.streaming.kafka.consumer.cache.enabled", "false")
             .config("spark.streaming.kafka.consumer.poll.ms", "60000")
+            # Add packages for Kafka and Cassandra integration
+            .config(
+                "spark.jars.packages",
+                "org.apache.spark:spark-sql-kafka-0-10_2.12:3.3.0,"
+                "com.datastax.spark:spark-cassandra-connector_2.12:3.3.0",
+            )
             .master("local[*]")
         )
 
@@ -94,7 +96,9 @@ class StockDataProcessor:
 
     def read_from_kafka(self):
         """Read stock data stream from Kafka."""
-        logger.info(f"Reading from Kafka topic: {self.kafka_topic}")
+        logger.info(
+            f"Reading from Kafka topic: {self.kafka_topic} at {self.kafka_brokers}"
+        )
 
         return (
             self.spark.readStream.format("kafka")
@@ -138,69 +142,64 @@ class StockDataProcessor:
         """Compute technical indicators and feature engineering."""
         logger.info("Computing technical indicators and features")
 
-        # Define windows for different time periods
-        window_5 = Window.partitionBy("Name").orderBy("date").rowsBetween(-4, 0)
-        window_20 = Window.partitionBy("Name").orderBy("date").rowsBetween(-19, 0)
-        prev_row = Window.partitionBy("Name").orderBy("date").rowsBetween(-1, -1)
+        # Define time-based windows
+        time_window_5 = "5 minutes"
+        time_window_20 = "20 minutes"
 
-        # Compute technical indicators
-        processed_stream = (
-            validated_stream.withColumn(
-                "returns",
-                (
-                    col("close")
-                    - lag("close", 1).over(Window.partitionBy("Name").orderBy("date"))
-                )
-                / lag("close", 1).over(Window.partitionBy("Name").orderBy("date")),
-            )
-            .withColumn("sma_5", avg("close").over(window_5))
-            .withColumn("sma_20", avg("close").over(window_20))
-            .withColumn("volatility", stddev("returns").over(window_20))
-            .withColumn(
-                "upper_band", col("sma_20") + (2 * stddev("close").over(window_20))
-            )
-            .withColumn(
-                "lower_band", col("sma_20") - (2 * stddev("close").over(window_20))
-            )
-            .withColumn("volume_sma_5", avg("volume").over(window_5))
-            .withColumn("price_to_sma_ratio", col("close") / col("sma_20"))
-            .withColumn("high_low_diff", col("high") - col("low"))
-            .withColumn("daily_range_pct", col("high_low_diff") / col("low"))
-            .withColumn(
-                "rsi_diff",
-                when(
-                    col("close") > lag("close", 1).over(prev_row),
-                    col("close") - lag("close", 1).over(prev_row),
-                ).otherwise(0),
-            )
-            .withColumn(
-                "rsi_down",
-                when(
-                    col("close") < lag("close", 1).over(prev_row),
-                    lag("close", 1).over(prev_row) - col("close"),
-                ).otherwise(0),
-            )
+        # Compute necessary columns before groupBy
+        validated_stream = validated_stream.withColumn(
+            "high_low_diff", col("high") - col("low")
         )
 
-        # Add time components for Cassandra partitioning
+        # Compute technical indicators using time-based windows
         processed_stream = (
-            processed_stream.withColumn("year", year(col("date")))
-            .withColumn("month", month(col("date")))
-            .withColumn("day", dayofmonth(col("date")))
-            .withColumn("hour", hour(col("date")))
-            .withColumn("minute", minute(col("date")))
+            validated_stream.withWatermark(
+                "date", "1 minute"
+            )  # Add watermark to handle late data
+            .groupBy(window("date", time_window_5), "Name")
+            .agg(
+                avg("close").alias("sma_5"),
+                avg("volume").alias("volume_sma_5"),
+                last("close").alias("last_close"),
+                max("high_low_diff").alias("max_high_low_diff"),
+                max("low").alias("max_low"),
+                first("Name").alias("symbol"),
+                first("date").alias("date"),
+                first("open").alias("open"),
+                first("high").alias("high"),
+                first("low").alias("low"),
+                first("close").alias("close"),
+                first("volume").alias("volume")
+            )
+            .withColumn("price_to_sma_ratio", col("last_close") / col("sma_5"))
+            .withColumn("daily_range_pct", col("max_high_low_diff") / col("max_low"))
+        )
+
+        # Add time components for Cassandra partitioning using the window column
+        processed_stream = (
+            processed_stream.withColumn("year", year(col("window.start")))
+            .withColumn("month", month(col("window.start")))
+            .withColumn("day", dayofmonth(col("window.start")))
+            .withColumn("hour", hour(col("window.start")))
+            .withColumn("minute", minute(col("window.start")))
             .withColumn("processing_time", current_timestamp())
+        )
+        
+        # Select only the columns that exist in the Cassandra table
+        # and drop columns that don't exist in the table schema
+        final_stream = processed_stream.select(
+            "symbol", "date", "year", "month", "day", "hour", "minute",
+            "open", "high", "low", "close", "volume", "sma_5", 
+            "volume_sma_5", "price_to_sma_ratio",
+            "daily_range_pct", "processing_time"
         )
 
         logger.info("Feature computation complete")
-        return processed_stream
+        return final_stream
 
     def write_to_cassandra(self, feature_stream):
         """
         Write the processed feature stream to Cassandra
-
-        Args:
-            feature_stream: Processed DataFrame with computed features
         """
         logger.info(
             f"Writing data to Cassandra keyspace={self.cassandra_keyspace}, table={self.cassandra_table}"
@@ -234,12 +233,28 @@ class StockDataProcessor:
         logger.info("Started streaming write to Cassandra")
         return query
 
+    def create_console_output(self, feature_stream):
+        """
+        Create a console output for debugging purposes
+        """
+        logger.info("Creating console output stream for debugging")
+
+        return (
+            feature_stream.writeStream.outputMode("append")
+            .format("console")
+            .option("truncate", "false")
+            .option("numRows", 10)
+            .start()
+        )
+
 
 def main():
     """
     Main function to run the stock data processing pipeline
     """
     logger.info("Starting stock data processing pipeline")
+    logger.info(f"Using Kafka broker: {KAFKA_BOOTSTRAP_SERVERS}")
+    logger.info(f"Using Cassandra host: {CASSANDRA_HOST}")
 
     # Initialize the processor
     processor = StockDataProcessor()
@@ -254,14 +269,21 @@ def main():
         # Compute features
         feature_stream = processor.compute_features(validated_stream)
 
-        # Write to Cassandra
-        query = processor.write_to_cassandra(feature_stream)
+        # Optional: Debug output to console
+        console_query = processor.create_console_output(feature_stream)
 
-        # Wait for the streaming query to terminate
-        query.awaitTermination()
+        # Write to Cassandra
+        cassandra_query = processor.write_to_cassandra(feature_stream)
+
+        # Wait for the streaming queries to terminate
+        console_query.awaitTermination()
+        cassandra_query.awaitTermination()
 
     except Exception as e:
         logger.error(f"Error in processing pipeline: {str(e)}")
+        import traceback
+
+        logger.error(traceback.format_exc())
         raise
     finally:
         # Clean up resources if needed
