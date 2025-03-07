@@ -26,17 +26,10 @@ CREATE TABLE IF NOT EXISTS stock_features (
     close DECIMAL,
     volume BIGINT,
     sma_5 DECIMAL,
-    sma_20 DECIMAL,
-    upper_band DECIMAL,
-    lower_band DECIMAL,
     volume_sma_5 DECIMAL,
     price_to_sma_ratio DECIMAL,
     high_low_diff DECIMAL,
     daily_range_pct DECIMAL,
-    rsi_diff DECIMAL,
-    rsi_down DECIMAL,
-    volatility DECIMAL,
-    returns DECIMAL,
     processing_time TIMESTAMP,
     PRIMARY KEY ((symbol, year, month), date, hour, minute)
 ) WITH CLUSTERING ORDER BY (date ASC, hour ASC, minute ASC);
