@@ -18,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Environment variables with defaults
-KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "redpanda:9093")
+KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "redpanda:29092")
 MARKET_DATA_TOPIC = os.environ.get("MARKET_DATA_TOPIC", "market_data")
 CASSANDRA_HOST = os.environ.get("CASSANDRA_HOST", "cassandra")
 CASSANDRA_PORT = os.environ.get("CASSANDRA_PORT", "9042")
@@ -41,6 +41,7 @@ class StockDataProcessor:
         cassandra_keyspace="market_data",
         cassandra_table="stock_features",
     ):
+        logger.warning(f"THIS IS IT: {MARKET_DATA_TOPIC}")
         """Initialize the StockDataProcessor with configuration parameters."""
         self.kafka_brokers = kafka_brokers
         self.kafka_topic = kafka_topic
@@ -133,69 +134,11 @@ class StockDataProcessor:
             .filter(col("low") <= col("open"))
             .filter(col("low") <= col("close"))
             .filter(col("volume") >= 0)
+            .withColumnRenamed("Name", "name")
         )
 
         logger.info("Data validation complete")
         return validated_stream
-
-    def compute_features(self, validated_stream):
-        """Compute technical indicators and feature engineering."""
-        logger.info("Computing technical indicators and features")
-
-        # Define time-based windows
-        time_window_5 = "5 minutes"
-        time_window_20 = "20 minutes"
-
-        # Compute necessary columns before groupBy
-        validated_stream = validated_stream.withColumn(
-            "high_low_diff", col("high") - col("low")
-        )
-
-        # Compute technical indicators using time-based windows
-        processed_stream = (
-            validated_stream.withWatermark(
-                "date", "1 minute"
-            )  # Add watermark to handle late data
-            .groupBy(window("date", time_window_5), "Name")
-            .agg(
-                avg("close").alias("sma_5"),
-                avg("volume").alias("volume_sma_5"),
-                last("close").alias("last_close"),
-                max("high_low_diff").alias("max_high_low_diff"),
-                max("low").alias("max_low"),
-                first("Name").alias("symbol"),
-                first("date").alias("date"),
-                first("open").alias("open"),
-                first("high").alias("high"),
-                first("low").alias("low"),
-                first("close").alias("close"),
-                first("volume").alias("volume")
-            )
-            .withColumn("price_to_sma_ratio", col("last_close") / col("sma_5"))
-            .withColumn("daily_range_pct", col("max_high_low_diff") / col("max_low"))
-        )
-
-        # Add time components for Cassandra partitioning using the window column
-        processed_stream = (
-            processed_stream.withColumn("year", year(col("window.start")))
-            .withColumn("month", month(col("window.start")))
-            .withColumn("day", dayofmonth(col("window.start")))
-            .withColumn("hour", hour(col("window.start")))
-            .withColumn("minute", minute(col("window.start")))
-            .withColumn("processing_time", current_timestamp())
-        )
-        
-        # Select only the columns that exist in the Cassandra table
-        # and drop columns that don't exist in the table schema
-        final_stream = processed_stream.select(
-            "symbol", "date", "year", "month", "day", "hour", "minute",
-            "open", "high", "low", "close", "volume", "sma_5", 
-            "volume_sma_5", "price_to_sma_ratio",
-            "daily_range_pct", "processing_time"
-        )
-
-        logger.info("Feature computation complete")
-        return final_stream
 
     def write_to_cassandra(self, feature_stream):
         """
@@ -264,19 +207,19 @@ def main():
         kafka_stream = processor.read_from_kafka()
 
         # Validate the data
-        validated_stream = processor.validate_data(kafka_stream)
+        feature_stream = processor.validate_data(kafka_stream)
 
-        # Compute features
-        feature_stream = processor.compute_features(validated_stream)
+        # # Compute features
+        # feature_stream = processor.compute_features(validated_stream)
 
-        # Optional: Debug output to console
-        console_query = processor.create_console_output(feature_stream)
+        # # Optional: Debug output to console
+        # console_query = processor.create_console_output(feature_stream)
 
         # Write to Cassandra
         cassandra_query = processor.write_to_cassandra(feature_stream)
 
-        # Wait for the streaming queries to terminate
-        console_query.awaitTermination()
+        # # Wait for the streaming queries to terminate
+        # console_query.awaitTermination()
         cassandra_query.awaitTermination()
 
     except Exception as e:
