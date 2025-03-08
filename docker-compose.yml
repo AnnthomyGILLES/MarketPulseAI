@@ -57,7 +57,7 @@ services:
         condition: service_healthy
     volumes:
       - ./config/database:/config/database
-    command: /bin/bash -c "cqlsh cassandra -f /config/database/cassandra_schema.cql"
+    command: /bin/bash -c "cqlsh cassandra -f /config/database/cassandra_schema_dev.cql"
     networks:
       - kafka-network
     restart: on-failure
@@ -76,7 +76,7 @@ services:
       - spark-volume:/bitnami
     environment:
       - SPARK_MODE=master
-      - KAFKA_BOOTSTRAP_SERVERS=redpanda:9093
+      - KAFKA_BOOTSTRAP_SERVERS=redpanda:29092
       - MARKET_DATA_TOPIC=market_data
       - CASSANDRA_HOST=cassandra
       - CASSANDRA_PORT=9042

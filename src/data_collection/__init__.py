@@ -29,7 +29,7 @@ config_path = os.path.join(
 config.read(config_path)
 
 # Kafka configuration
-KAFKA_BOOTSTRAP_SERVERS = "redpanda:9093"
+KAFKA_BOOTSTRAP_SERVERS = "redpanda:29092"
 MARKET_DATA_TOPIC = config.get("kafka", "market_data_topic", fallback="market_data")
 TWITTER_DATA_TOPIC = config.get("kafka", "twitter_data_topic", fallback="twitter_data")
 REDDIT_DATA_TOPIC = config.get("kafka", "reddit_data_topic", fallback="reddit_data")
