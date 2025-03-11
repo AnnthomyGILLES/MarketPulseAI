@@ -105,7 +105,8 @@ class StockDataProcessor:
             self.spark.readStream.format("kafka")
             .option("kafka.bootstrap.servers", self.kafka_brokers)
             .option("subscribe", self.kafka_topic)
-            .option("startingOffsets", "latest")
+            .option("startingOffsets", "earliest")
+            .option("failOnDataLoss", "false")
             .load()
         )
 

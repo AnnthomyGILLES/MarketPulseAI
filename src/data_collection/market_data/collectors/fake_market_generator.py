@@ -100,7 +100,7 @@ def generate_and_stream_fake_stock_data(
                 "low": low_price,
                 "close": close_price,
                 "volume": minute_volume,
-                "symbol": ticker_symbol,
+                "Name": ticker_symbol,
             }
 
             # Send to Kafka
