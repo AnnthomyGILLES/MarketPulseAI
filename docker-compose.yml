@@ -38,29 +38,38 @@ services:
       - HEAP_NEWSIZE=512M
     networks:
       - kafka-network
+    healthcheck:
+      test: [ "CMD", "cqlsh", "-e", "describe keyspaces" ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
     deploy:
       resources:
         limits:
           memory: 4G
         reservations:
           memory: 2G
-    healthcheck:
-      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
 
   cassandra-init:
     image: cassandra:latest
+    volumes:
+      - ./config/database:/config/database
+    command: >
+      bash -c "
+        echo 'Waiting for Cassandra to start...' &&
+        until cqlsh cassandra -e 'describe keyspaces'; do
+          echo 'Cassandra not ready yet - retrying...';
+          sleep 5;
+        done &&
+        echo 'Initializing Cassandra schema...' &&
+        cqlsh cassandra -f /config/database/cassandra_schema_dev.cql &&
+        echo 'Schema initialization complete!'
+      "
+    networks:
+      - kafka-network
     depends_on:
       cassandra:
         condition: service_healthy
-    volumes:
-      - ./config/database:/config/database
-    command: /bin/bash -c "cqlsh cassandra -f /config/database/cassandra_schema_dev.cql"
-    networks:
-      - kafka-network
-    restart: on-failure
 
   # Single Spark dev container with all components
   spark:
@@ -111,10 +120,32 @@ services:
     networks:
       - kafka-network
 
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_INSTALL_PLUGINS=hadesarchitect-cassandra-datasource
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - kafka-network
+    depends_on:
+      - cassandra
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "http://localhost:3000/api/health" ]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+
 volumes:
   redpanda-data:
   spark-volume:
   cassandra-data:
+  grafana-data:
 
 networks:
   kafka-network:
