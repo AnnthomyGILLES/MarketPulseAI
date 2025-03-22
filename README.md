@@ -148,12 +148,10 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
-
 ## 📋 Project Structure
 
 ```
-marketpulseai/
+MarketPulseAI/
 │
 ├── .env                          # Environment variables (gitignored)
 ├── .gitignore                    # Git ignore rules
@@ -176,23 +174,151 @@ marketpulseai/
 │   └── cache/                    # Cached data
 │
 ├── notebooks/                    # Jupyter notebooks for experimentation
+│   ├── market_data_exploration/  # Market data analysis
+│   ├── sentiment_analysis/       # Sentiment analysis exploration
+│   ├── model_development/        # ML model development
+│   └── visualization/            # Visualization experiments
+│
+├── docs/                         # Documentation
+│   ├── architecture/             # System architecture docs
+│   ├── api/                      # API documentation
+│   ├── user_guide/               # User documentation
+│   └── development/              # Development guidelines
+│
+├── scripts/                      # Utility scripts
+│   ├── setup/                    # Setup scripts
+│   ├── data_collection/          # Data collection scripts
+│   ├── backup/                   # Backup scripts
+│   └── maintenance/              # Maintenance scripts
+│
+├── tests/                        # Test suite
+│   ├── unit/                     # Unit tests
+│   │   ├── market_data/          # Market data tests
+│   │   ├── sentiment/            # Sentiment analysis tests
+│   │   ├── prediction/           # Prediction engine tests
+│   │   └── api/                  # API tests
+│   ├── integration/              # Integration tests
+│   ├── performance/              # Performance tests
+│   └── fixtures/                 # Test fixtures
+│
+├── monitoring/                   # System monitoring
+│   ├── health_checks/            # Health check scripts
+│   ├── metrics/                  # Metrics collection
+│   ├── alerts/                   # Alert configuration
+│   └── dashboards/               # Monitoring dashboards
 │
 ├── src/                          # Source code
 │   ├── data_collection/          # Data collection modules
+│   │   ├── __init__.py
+│   │   ├── market_data/          # Market data collection
+│   │   │   ├── __init__.py
+│   │   │   ├── collectors/       # Data source collectors
+│   │   │   ├── parsers/          # Data parsers
+│   │   │   └── validation/       # Data validation
+│   │   │
+│   │   └── social_media/         # Social media collection
+│   │       ├── __init__.py
+│   │       ├── twitter/          # Twitter data collection
+│   │       ├── reddit/           # Reddit data collection
+│   │       └── news/             # Financial news collection
+│   │
 │   ├── data_processing/          # Data processing modules
+│   │   ├── __init__.py
+│   │   ├── market_data/          # Market data processing
+│   │   │   ├── __init__.py
+│   │   │   ├── cleaning/         # Data cleaning
+│   │   │   ├── feature_eng/      # Feature engineering
+│   │   │   └── indicators/       # Technical indicators
+│   │   │
+│   │   └── sentiment/            # Sentiment processing
+│   │       ├── __init__.py
+│   │       ├── preprocessing/    # Text preprocessing
+│   │       ├── analysis/         # Sentiment analysis
+│   │       └── aggregation/      # Sentiment aggregation
+│   │
+│   ├── storage/                  # Data storage modules
+│   │   ├── __init__.py
+│   │   ├── database/             # Database operations
+│   │   ├── streaming/            # Streaming data handlers
+│   │   ├── cache/                # Caching operations
+│   │   └── models/               # Model storage
+│   │
 │   ├── models/                   # Machine learning models
+│   │   ├── __init__.py
+│   │   ├── market_prediction/    # Price prediction models
+│   │   │   ├── __init__.py
+│   │   │   ├── feature_selection/# Feature selection
+│   │   │   ├── training/         # Model training
+│   │   │   ├── evaluation/       # Model evaluation
+│   │   │   └── prediction/       # Prediction generation
+│   │   │
+│   │   ├── sentiment_models/     # Sentiment models
+│   │   │   ├── __init__.py
+│   │   │   ├── classification/   # Sentiment classification
+│   │   │   └── evaluation/       # Sentiment model evaluation
+│   │   │
+│   │   └── combined_models/      # Combined prediction models
+│   │       ├── __init__.py
+│   │       ├── feature_fusion/   # Feature combination
+│   │       └── ensemble/         # Ensemble models
+│   │
+│   ├── streaming/                # Streaming data processing
+│   │   ├── __init__.py
+│   │   ├── kafka/                # Kafka producers/consumers
+│   │   └── spark/                # Spark streaming jobs
+│   │
+│   ├── prediction_engine/        # Prediction engine
+│   │   ├── __init__.py
+│   │   ├── scheduler/            # Prediction scheduling
+│   │   ├── executor/             # Prediction execution
+│   │   └── evaluation/           # Real-time evaluation
+│   │
 │   ├── api/                      # API layer
+│   │   ├── __init__.py
+│   │   ├── routes/               # API routes
+│   │   ├── serializers/          # Data serializers
+│   │   ├── auth/                 # Authentication
+│   │   └── middleware/           # API middleware
+│   │
 │   ├── dashboard/                # Web dashboard
-│   └── utils/                    # Utility modules
-│
-├── tests/                        # Test suite
-│
-├── monitoring/                   # System monitoring
-│   ├── prometheus/               # Prometheus configuration
-│   ├── grafana/                  # Grafana dashboards
-│   └── alerts/                   # Alert configuration
+│   │   ├── backend/              # Dashboard backend
+│   │   │   ├── __init__.py
+│   │   │   ├── server.py         # Web server
+│   │   │   └── websockets/       # WebSocket handlers
+│   │   │
+│   │   └── frontend/             # Dashboard frontend
+│   │       ├── public/           # Public assets
+│   │       ├── src/              # Frontend source code
+│   │       │   ├── components/   # UI components
+│   │       │   ├── pages/        # Page components
+│   │       │   ├── services/     # API services
+│   │       │   ├── hooks/        # Custom hooks
+│   │       │   ├── utils/        # Utility functions
+│   │       │   └── App.js        # Main app component
+│   │       │
+│   │       ├── package.json      # Frontend dependencies
+│   │       └── README.md         # Frontend documentation
+│   │
+│   ├── utils/                    # Utility modules
+│   │   ├── __init__.py
+│   │   ├── logging/              # Logging utilities
+│   │   ├── config/               # Configuration utilities
+│   │   ├── validation/           # Data validation
+│   │   ├── datetime/             # Date/time utilities
+│   │   └── metrics/              # Metrics utilities
+│   │
+│   └── alerts/                   # Alert system
+│       ├── __init__.py
+│       ├── triggers/             # Alert triggers
+│       ├── notifications/        # Notification delivery
+│       └── templates/            # Alert templates
 │
 └── dockerfiles/                  # Dockerfile for each service
+    ├── api/                      # API service Dockerfile
+    ├── data_collection/          # Data collection Dockerfile
+    ├── processing/               # Processing Dockerfile
+    ├── prediction/               # Prediction Dockerfile
+    └── dashboard/                # Dashboard Dockerfile
 ```
 
 ## 📈 Performance Metrics
