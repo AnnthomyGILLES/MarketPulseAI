@@ -1,8 +1,6 @@
-# src/data_processing/sentiment/analysis/sentiment_analyzer.py
-
-import logging
 from typing import Dict, List, Optional, Union
 import numpy as np
+from loguru import logger
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 import torch
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
@@ -14,8 +12,6 @@ from src.utils.metrics import timer
 from src.storage.cache.redis_client import RedisClient
 
 from src.data_processing.sentiment.preprocessing.text_processor import TextPreprocessor
-
-logger = logging.getLogger(__name__)
 
 
 class SentimentAnalyzer:
