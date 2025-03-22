@@ -1,14 +1,12 @@
 import re
-import logging
 import unicodedata
 import emoji
 from typing import Dict, Set
 import nltk
+from loguru import logger
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
-
-logger = logging.getLogger(__name__)
 
 
 class TextPreprocessor:
