@@ -4,9 +4,9 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 ![GitHub stars](https://img.shields.io/github/stars/yourusername/marketpulseai?style=social)
 
-<p align="center">
-  <img src="docs/architecture/system_architecture.png" alt="MarketPulseAI Architecture" width="800"/>
-</p>
+
+For the past few months, I've been dedicating my nights and weekends to a side project that combines my passions for machine learning and financial markets. As an ML/AI engineer by day, I wanted to challenge myself with something that would push my technical boundaries.
+
 
 ## 🔍 What Does MarketPulseAI Do?
 
@@ -29,6 +29,11 @@ Think of it as having two eyes on the market: one watching actual prices and tra
 ## 🏗️ System Architecture
 
 MarketPulseAI follows a modern data engineering pattern with clear separation of concerns:
+
+<p align="center">
+  <img src="docs/architecture/system_architecture.png" alt="MarketPulseAI Architecture" width="800"/>
+</p>
+
 
 ### Data Ingestion Layer
 
