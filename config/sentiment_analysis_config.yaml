@@ -1,0 +1,127 @@
+# config/sentiment_analysis_config.yaml
+
+# Main sentiment analysis configuration
+sentiment_analysis:
+  # Model selection and parameters
+  model:
+    # Primary sentiment model to use - Options: "finbert", "vader", "ensemble"
+    type: "ensemble"
+
+    # FinBERT configuration
+    finbert:
+      model_path: "models/finbert-sentiment"  # Path to the FinBERT model
+      max_sequence_length: 512                # Maximum token sequence length
+      batch_size: 16                          # Batch size for inference
+
+    # VADER configuration
+    vader:
+      finance_lexicon_path: "config/finance_lexicon.txt"  # Path to finance-specific lexicon
+
+    # Ensemble configuration
+    ensemble:
+      weights:
+        finbert: 0.6  # Weight for FinBERT in ensemble
+        vader: 0.4    # Weight for VADER in ensemble
+
+  # Preprocessing configuration
+  preprocessing:
+    lowercase: true
+    remove_urls: true
+    remove_html: true
+    remove_mentions: true
+    extract_hashtags: true
+    convert_emojis: true
+    normalize_unicode: true
+    remove_special_chars: true
+    remove_numbers: false
+    remove_stopwords: true
+    use_finance_stopwords: true
+    use_lemmatization: true
+
+  # Performance settings
+  performance:
+    max_workers: 8                # Number of worker threads for parallel processing
+    cache_enabled: true           # Enable results caching
+    cache_ttl: 3600               # Cache time-to-live in seconds (1 hour)
+    logging_level: "INFO"         # Logging level (DEBUG, INFO, WARNING, ERROR)
+
+# Aggregation configuration
+aggregation:
+  # Source weighting configuration
+  source_weights:
+    twitter: 0.30       # Weight for Twitter sentiment
+    reddit: 0.25        # Weight for Reddit sentiment
+    news: 0.40          # Weight for news sentiment
+    other: 0.05         # Weight for other sources
+
+  # Time decay parameters
+  time_decay_factor: 0.05         # Exponential decay factor for older sentiment
+  max_age_hours: 72              # Maximum age to consider for sentiment data
+
+  # Confidence parameters
+  confidence_data_points: 20      # Number of data points for full confidence
+
+  # Default parameters
+  default_ticker_count: 20        # Number of tickers to include in market sentiment
+  max_records: 1000               # Maximum records to retrieve per query
+
+  # Trend detection parameters
+  trend:
+    min_change_threshold: 0.05    # Minimum change to register as a trend
+    shift_detection_threshold: 0.15  # Threshold for significant sentiment shifts
+
+# Kafka configuration for data ingestion
+kafka:
+  enabled: true
+  bootstrap_servers: "kafka:9092"
+  group_id: "sentiment-analysis-group"
+  auto_offset_reset: "earliest"
+  enable_auto_commit: true
+  poll_timeout_ms: 1000
+  topics:
+    - "social-media.twitter"
+    - "social-media.reddit"
+    - "finance.news"
+
+  # Security configuration (optional)
+  security:
+    enabled: false
+    protocol: "sasl_ssl"
+    sasl_mechanism: "PLAIN"
+    sasl_username: "${KAFKA_USERNAME}"
+    sasl_password: "${KAFKA_PASSWORD}"
+
+# Redis configuration for caching
+redis:
+  enabled: true
+  host: "redis"
+  port: 6379
+  db: 0
+  password: "${REDIS_PASSWORD}"
+  socket_timeout: 5
+
+# Database configuration for sentiment storage
+database:
+  engine: "cassandra"
+  hosts: ["cassandra-1", "cassandra-2", "cassandra-3"]
+  keyspace: "market_pulse"
+  replication_factor: 3
+  consistency_level: "LOCAL_QUORUM"
+  timeout: 10
+
+  # Connection pooling
+  connection_pool:
+    min_connections: 5
+    max_connections: 20
+
+# Batch processing configuration
+batch_processing:
+  enabled: true
+  interval_seconds: 300                  # Run batch jobs every 5 minutes
+  aggregate_market_sentiment: true       # Periodically calculate market sentiment
+  market_timeframe_hours: 24             # Timeframe for market sentiment aggregation
+  detect_sentiment_shifts: true          # Detect significant sentiment shifts
+  shift_timeframe_hours: 48              # Timeframe for shift detection
+  shift_threshold: 0.15                  # Threshold for significant shifts
+  top_tickers_count: 50                  # Number of top tickers to monitor
+  cache_ttl: 1800                        # Cache TTL for batch results (30 minutes)
