@@ -1,16 +1,12 @@
-# src/data_processing/sentiment/aggregation/sentiment_aggregator.py
-
-import logging
 import numpy as np
 from typing import Dict, List, Optional, Union
 from datetime import datetime, timedelta
 from collections import defaultdict
 
+from loguru import logger
 from src.utils.metrics import timer
 from src.storage.database.sentiment_store import SentimentStore
 from src.utils.config import AggregationConfig
-
-logger = logging.getLogger(__name__)
 
 
 class SentimentAggregator:
