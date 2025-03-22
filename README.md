@@ -149,7 +149,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 5. Open a Pull Request
 
 ## 📋 Project Structure
-
+At the end, the project should look like this:
 ```
 MarketPulseAI/
 │
