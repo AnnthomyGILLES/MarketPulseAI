@@ -1,0 +1,104 @@
+graph TB
+    %% Data Sources
+    MS[Market Data Sources<br/>Stock Exchanges] --> KafkaC1
+    SM[Social Media APIs] --> KafkaC2
+    NW[News APIs] --> KafkaC2
+    
+    %% Data Ingestion Layer
+    subgraph "Data Ingestion Layer"
+        KafkaC1[Kafka Connect<br/>Market Data]
+        KafkaC2[Kafka Connect<br/>Social/News]
+        
+        KafkaC1 --> KT1[Kafka Topics<br/>Market Data]
+        KafkaC2 --> KT2[Kafka Topics<br/>Social/News]
+    end
+    
+    %% Data Validation Layer
+    subgraph "Data Validation"
+        KT1 --> V1[Market Data Validator]
+        KT2 --> V2[Content Validator]
+        
+        V1 --> VKT1[Valid Data Topic]
+        V2 --> VKT2[Valid Data Topic]
+        
+        V1 --> EH[Error Handler]
+        V2 --> EH
+    end
+    
+    %% Processing Layer
+    subgraph "Processing Layer"
+        %% Market Data Pipeline
+        VKT1 --> SP1[Spark Streaming<br/>Market Analysis]
+        SP1 --> FE1[Feature Engineering]
+        FE1 --> ML1[Deep Learning<br/>Price Prediction]
+        
+        %% Sentiment Pipeline
+        VKT2 --> SP2[Spark Streaming<br/>Text Processing]
+        SP2 --> FE2[NLP Feature Engineering]
+        FE2 --> ML2[Sentiment Analysis<br/>Model]
+    end
+    
+    %% Feature Store
+    subgraph "Feature Store"
+        FE1 --> RD[(Redis<br/>Online Features)]
+        FE2 --> RD
+        FE1 --> CS[(Cassandra<br/>Historical Features)]
+        FE2 --> CS
+    end
+    
+    %% Prediction Integration
+    subgraph "Signal Integration"
+        ML1 --> AG[Aggregation Service]
+        ML2 --> AG
+        AG --> FP[Final Predictions]
+    end
+    
+    %% Monitoring System
+    subgraph "Monitoring & Error Tracking"
+        FP --> PR[Prometheus]
+        ML1 --> PR
+        ML2 --> PR
+        
+        PR --> GF[Grafana Dashboards]
+        PR --> AM[Alert Manager]
+        
+        %% Error Metrics Storage
+        FP --> IF[(InfluxDB<br/>Error Metrics)]
+        IF --> GF
+        
+        AM --> NT[Notifications<br/>Slack/Email/PagerDuty]
+    end
+    
+    %% Serving Layer
+    subgraph "API Layer"
+        FP --> API[FastAPI Service]
+        API --> WS[WebSocket Server]
+    end
+    
+    %% Dashboard Layer
+    subgraph "Real-Time Dashboard Layer"
+        WS --> STR[Streamlit Real-Time Engine]
+        RD --> STR
+        CS --> STR
+        
+        STR --> D1[Market Analysis Dashboard]
+        STR --> D2[Sentiment Analysis Dashboard]
+        STR --> D3[Performance Metrics]
+        
+        D1 & D2 & D3 --> UI[Interactive Real-Time Interface]
+    end
+    
+    %% Styling
+    classDef source fill:#f96,stroke:#333,stroke-width:2px
+    classDef processing fill:#58a,stroke:#333,stroke-width:2px
+    classDef storage fill:#7b6,stroke:#333,stroke-width:2px
+    classDef monitoring fill:#f9a,stroke:#333,stroke-width:2px
+    classDef serving fill:#a7c,stroke:#333,stroke-width:2px
+    classDef dashboard fill:#c8a,stroke:#333,stroke-width:2px
+    
+    class MS,SM,NW source
+    class SP1,SP2,FE1,FE2,ML1,ML2,AG processing
+    class RD,CS,IF storage
+    class PR,GF,AM monitoring
+    class API,WS serving
+    class STR,D1,D2,D3,UI dashboard
