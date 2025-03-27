@@ -1,0 +1,146 @@
+---
+config:
+  theme: forest
+  themeVariables:
+    primaryColor: '#5D8AA8'
+    primaryTextColor: '#fff'
+    primaryBorderColor: '#5D8AA8'
+    lineColor: '#415a77'
+    secondaryColor: '#006400'
+    tertiaryColor: '#fff'
+  flowchart:
+    htmlLabels: true
+    curve: basis
+    rankSpacing: 55
+    nodeSpacing: 30
+    padding: 10
+    diagramPadding: 8
+  sequence:
+    mirrorActors: false
+    bottomMarginAdj: 1
+    noteAlign: right
+  look: classic
+---
+flowchart TD
+    subgraph DataSources["🌐 **Data Sources Layer**"]
+        StockExchanges["📊 Stock Exchanges"]
+        SocialMedia["🔄 Social Media (Twitter, Reddit)"]
+        NewsAPIs["📰 News (Bloomberg, Reuters)"]
+    end
+    subgraph DataIngestion["📥 **Data Ingestion Layer**"]
+        KafkaConnectMarket["🔄 Market Connector"]
+        KafkaConnectSocial["🔄 Social & News Connector"]
+        KafkaTopicMarket["📊 Kafka Topics <small>for</small> Market Data"]
+        KafkaTopicSocial["💬 Kafka Topics <small>for</small> Social/News"]
+    end
+    subgraph DataValidation["✅ **Data Validation Layer**"]
+        MarketValidator["🔍 Market Validator"]
+        ContentValidator["🔍 Content Validator"]
+        ValidDataMarket["✓ Valid Market Data"]
+        ValidDataSocial["✓ Valid Social Data"]
+        ErrorHandler["⚠️ Error Handler"]
+    end
+    subgraph ProcessingLayer["⚙️ **Processing Layer**"]
+        SparkMarket["⚡ Market Analysis"]
+        SparkSocial["⚡ Text Processing"]
+        FeatureEngMarket["🔧 Feature Eng <small>Indicators</small>"]
+        FeatureEngSocial["🔧 NLP Feature Engineering"]
+        DLPrediction["🧠 Deep Learning Prediction"]
+        SentimentAnalysis["😊 Sentiment Analysis"]
+    end
+    subgraph FeatureStore["💾 **Feature Store Layer**"]
+        Redis[("📊 Redis<small>Online</small>")]
+        Cassandra[("🗄️ Cassandra<small>Historical</small>")]
+    end
+    subgraph SignalIntegration["🔄 **Signal Integration Layer**"]
+        AggregationService["🧩 Aggregation Service - Final Prediction"]
+    end
+    subgraph APILayer["🔌 **API Layer**"]
+        FastAPI["⚡ FastAPI Service"]
+        WebSocket["🔄 WebSocket"]
+    end
+    subgraph DashboardLayer["📊 **Dashboard Layer**"]
+        StreamlitEngine["🚀 Streamlit"]
+        MarketDashboard["📈 Market Trends"]
+        SentimentDashboard["🔍 Social mood"]
+        PerformanceDashboard["⚙️ Performance"]
+    end
+    subgraph MonitoringLayer["🔍 **Monitoring Layer**"]
+        Prometheus["📊 Prometheus"]
+        Grafana["📉 Grafana "]
+        InfluxDB[("📊 InfluxDB")]
+        AlertManager["🚨 Alerts Manager"]
+        Notifications["📱 Notifications"]
+    end
+    StockExchanges -->|"Data"| KafkaConnectMarket
+    SocialMedia -->|"Posts"| KafkaConnectSocial
+    NewsAPIs -->|"News"| KafkaConnectSocial
+    KafkaConnectMarket -->|"Stream"| KafkaTopicMarket
+    KafkaConnectSocial -->|"Stream"| KafkaTopicSocial
+    KafkaTopicMarket -->|"Consume"| MarketValidator
+    KafkaTopicSocial -->|"Consume"| ContentValidator
+    MarketValidator -->|"Valid"| ValidDataMarket
+    MarketValidator -->|"Invalid"| ErrorHandler
+    ContentValidator -->|"Valid"| ValidDataSocial
+    ContentValidator -->|"Invalid"| ErrorHandler
+    ValidDataMarket -->|"Process"| SparkMarket
+    ValidDataSocial -->|"Process"| SparkSocial
+    SparkMarket -->|"Features"| FeatureEngMarket
+    FeatureEngMarket -->|"Train"| DLPrediction
+    SparkSocial -->|"Features"| FeatureEngSocial
+    FeatureEngSocial -->|"Analyze"| SentimentAnalysis
+    DLPrediction -->|"Store"| Redis
+    DLPrediction -->|"Archive"| Cassandra
+    SentimentAnalysis -->|"Store"| Redis
+    SentimentAnalysis -->|"Archive"| Cassandra
+    Redis -->|"Real-time"| AggregationService
+    Cassandra -->|"Historical"| AggregationService
+    AggregationService -->|"Serve"| FastAPI
+    FastAPI -->|"Push"| WebSocket
+    WebSocket -->|"Data"| StreamlitEngine
+    StreamlitEngine -->|"UI"| MarketDashboard
+    StreamlitEngine -->|"UI"| SentimentDashboard
+    StreamlitEngine -->|"UI"| PerformanceDashboard
+    AggregationService -->|"Metrics"| Prometheus
+    FastAPI -->|"Metrics"| Prometheus
+    Prometheus -->|"Viz"| Grafana
+    Prometheus -->|"Alert"| AlertManager
+    ErrorHandler -->|"Log"| InfluxDB
+    InfluxDB -->|"Errors"| Grafana
+    AlertManager -->|"Send"| Notifications
+    classDef sourcesBox fill:#e6f7ff,stroke:#0073cf,stroke-width:1.5px
+    classDef ingestBox fill:#fff7e6,stroke:#f39c12,stroke-width:1.5px
+    classDef validBox fill:#e6ffe6,stroke:#27ae60,stroke-width:1.5px
+    classDef processBox fill:#ffe6e6,stroke:#c0392b,stroke-width:1.5px
+    classDef storeBox fill:#f2e6ff,stroke:#8e44ad,stroke-width:1.5px
+    classDef integrateBox fill:#e6fff2,stroke:#16a085,stroke-width:1.5px
+    classDef apiBox fill:#fffde6,stroke:#d35400,stroke-width:1.5px
+    classDef dashBox fill:#ffe6f0,stroke:#e74c3c,stroke-width:1.5px
+    classDef monitorBox fill:#e6f0ff,stroke:#3498db,stroke-width:1.5px
+    classDef sources fill:#D4F1F9,stroke:#05445E,stroke-width:1px,rx:10,ry:10
+    classDef kafka fill:#FFEAD2,stroke:#CC704B,stroke-width:1px,rx:10,ry:10
+    classDef validation fill:#E9FFC2,stroke:#4E6C50,stroke-width:1px,rx:10,ry:10
+    classDef processing fill:#FCD1D1,stroke:#AE445A,stroke-width:1px,rx:10,ry:10
+    classDef storage fill:#D8B4F8,stroke:#6528F7,stroke-width:1px,rx:10,ry:10
+    classDef integration fill:#C1F4C5,stroke:#1D5D9B,stroke-width:1px,rx:10,ry:10
+    classDef api fill:#F9F3CC,stroke:#DBA39A,stroke-width:1px,rx:10,ry:10
+    classDef dashboard fill:#FEA1BF,stroke:#A84448,stroke-width:1px,rx:10,ry:10
+    classDef monitoring fill:#D2E0FB,stroke:#7091F5,stroke-width:1px,rx:10,ry:10
+    class DataSources sourcesBox
+    class DataIngestion ingestBox
+    class DataValidation validBox
+    class ProcessingLayer processBox
+    class FeatureStore storeBox
+    class SignalIntegration integrateBox
+    class APILayer apiBox
+    class DashboardLayer dashBox
+    class MonitoringLayer monitorBox
+    class StockExchanges,SocialMedia,NewsAPIs sources
+    class KafkaConnectMarket,KafkaConnectSocial,KafkaTopicMarket,KafkaTopicSocial kafka
+    class MarketValidator,ContentValidator,ValidDataMarket,ValidDataSocial,ErrorHandler validation
+    class SparkMarket,SparkSocial,FeatureEngMarket,FeatureEngSocial,DLPrediction,SentimentAnalysis processing
+    class Redis,Cassandra,InfluxDB storage
+    class AggregationService integration
+    class FastAPI,WebSocket api
+    class StreamlitEngine,MarketDashboard,SentimentDashboard,PerformanceDashboard dashboard
+    class Prometheus,Grafana,AlertManager,Notifications monitoring
