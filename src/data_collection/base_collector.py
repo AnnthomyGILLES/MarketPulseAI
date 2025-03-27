@@ -1,122 +1,141 @@
 """
-Base collector module providing the foundation for all data collectors.
+Base class for data collectors that send data to Kafka.
 """
 
-import json
-import time
-from abc import ABC, abstractmethod
+import os
+import yaml
 from typing import Dict, Any, Optional
+import logging
+from pathlib import Path
 
-from kafka import KafkaProducer
-
-from src.utils.config import load_config
-from src.utils.logging import setup_logger
+from src.common.messaging.kafka_producer import KafkaProducerWrapper
 
 
-class BaseCollector(ABC):
+class BaseCollector:
     """
-    Abstract base class for all data collectors.
-
-    This class provides common functionality for data collection,
-    including connection to Kafka, configuration loading, and error handling.
+    Base collector class that provides common functionality for data collectors.
+    
+    This class handles configuration loading, logging setup, and Kafka integration
+    to be inherited by specific collector implementations.
     """
 
-    def __init__(self, config_path: str, logger_name: str):
+    def __init__(self, config_path: str, collector_name: str):
         """
         Initialize the base collector.
 
         Args:
+            config_path: Path to the Kafka configuration file
+            collector_name: Name of the collector (used for logging and topics)
+        """
+        self.config = self._load_config(config_path)
+        self.collector_name = collector_name
+        self.logger = self._setup_logger()
+        self.kafka_producers = {}  # Dictionary to store Kafka producers by topic
+
+    def _load_config(self, config_path: str) -> Dict[str, Any]:
+        """
+        Load configuration from a YAML file.
+
+        Args:
             config_path: Path to the configuration file
-            logger_name: Name for the logger instance
-        """
-        self.config = load_config(config_path)
-        self.logger = setup_logger(logger_name)
-        self.producer = self._create_kafka_producer()
-
-    def _create_kafka_producer(self) -> KafkaProducer:
-        """
-        Create and configure a Kafka producer.
 
         Returns:
-            KafkaProducer: Configured Kafka producer instance
+            Dictionary containing configuration
+            
+        Raises:
+            FileNotFoundError: If the configuration file is not found
         """
-        try:
-            kafka_config = self.config["kafka"]["producer"]
-            bootstrap_servers = self.config["kafka"]["bootstrap_servers"]
+        config_file = Path(config_path)
+        if not config_file.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
-            return KafkaProducer(
-                bootstrap_servers=bootstrap_servers,
-                acks=kafka_config["acks"],
-                retries=kafka_config["retries"],
-                batch_size=kafka_config["batch_size"],
-                linger_ms=kafka_config["linger_ms"],
-                buffer_memory=kafka_config["buffer_memory"],
-                value_serializer=lambda x: json.dumps(x).encode("utf-8"),
+        with open(config_file, "r") as f:
+            return yaml.safe_load(f)
+
+    def _setup_logger(self) -> logging.Logger:
+        """
+        Set up logging for the collector.
+
+        Returns:
+            Configured logger
+        """
+        logger = logging.getLogger(f"{self.collector_name}")
+        
+        # Configure logging if it hasn't been configured already
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
             )
-        except Exception as e:
-            self.logger.error(f"Failed to create Kafka producer: {str(e)}")
-            raise
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+            
+        return logger
 
-    def send_to_kafka(
-        self, topic: str, data: Dict[str, Any], key: Optional[str] = None
-    ) -> None:
+    def _get_producer(self, topic: str) -> KafkaProducerWrapper:
         """
-        Send data to a Kafka topic.
-
-        Args:
-            topic: Kafka topic to send data to
-            data: Data to be sent
-            key: Optional key for the Kafka message
-        """
-        try:
-            if key:
-                self.producer.send(topic, key=key.encode("utf-8"), value=data)
-            else:
-                self.producer.send(topic, value=data)
-            self.logger.debug(f"Data sent to topic {topic}")
-        except Exception as e:
-            self.logger.error(f"Failed to send data to Kafka topic {topic}: {str(e)}")
-            self._handle_error(data, str(e))
-
-    def _handle_error(self, data: Dict[str, Any], error_message: str) -> None:
-        """
-        Handle errors during data collection or sending.
+        Get or create a Kafka producer for a specific topic.
 
         Args:
-            data: The data that failed to process
-            error_message: The error message
-        """
-        error_data = {
-            "original_data": data,
-            "error_message": error_message,
-            "timestamp": time.time(),
-        }
-        try:
-            self.producer.send(self._get_error_topic(), value=error_data)
-        except Exception as e:
-            self.logger.critical(f"Failed to send error data to error topic: {str(e)}")
-
-    @abstractmethod
-    def _get_error_topic(self) -> str:
-        """
-        Get the appropriate error topic for this collector.
+            topic: Kafka topic to produce to
 
         Returns:
-            str: The name of the error topic
+            KafkaProducerWrapper instance
         """
-        pass
+        if topic not in self.kafka_producers:
+            bootstrap_servers = self.config["kafka"]["bootstrap_servers"]
+            self.kafka_producers[topic] = KafkaProducerWrapper(
+                bootstrap_servers=bootstrap_servers,
+                topic=topic
+            )
+            self.logger.info(f"Created Kafka producer for topic: {topic}")
+        
+        return self.kafka_producers[topic]
 
-    @abstractmethod
+    def send_to_kafka(self, topic: str, message: Dict[str, Any], key: Optional[str] = None) -> bool:
+        """
+        Send a message to a Kafka topic.
+
+        Args:
+            topic: Kafka topic to send to
+            message: Message to send
+            key: Optional message key
+
+        Returns:
+            True if message was sent successfully, False otherwise
+        """
+        try:
+            producer = self._get_producer(topic)
+            success = producer.send_message(message)
+            return success
+        except Exception as e:
+            self.logger.error(f"Error sending message to Kafka: {str(e)}")
+            return False
+
     def collect(self) -> None:
         """
-        Collect data from the source.
-        This method must be implemented by subclasses.
+        Start the data collection process.
+        
+        This method should be implemented by subclasses.
         """
-        pass
+        raise NotImplementedError("Subclasses must implement collect()")
 
-    def close(self) -> None:
-        """Close the Kafka producer and perform cleanup."""
-        if self.producer:
-            self.producer.flush()
-            self.producer.close()
-        self.logger.info("Collector closed")
+    def stop(self) -> None:
+        """
+        Stop the data collection process.
+        
+        This method should be implemented by subclasses.
+        """
+        raise NotImplementedError("Subclasses must implement stop()")
+
+    def cleanup(self) -> None:
+        """
+        Clean up resources, including Kafka producers.
+        """
+        for topic, producer in self.kafka_producers.items():
+            try:
+                producer.close()
+                self.logger.info(f"Closed Kafka producer for topic: {topic}")
+            except Exception as e:
+                self.logger.error(f"Error closing Kafka producer for topic {topic}: {str(e)}")
