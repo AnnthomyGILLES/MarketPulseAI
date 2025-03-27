@@ -14,6 +14,10 @@ kafka-python = "^2.0.5"
 loguru = "^0.7.3"
 pyspark = "^3.5.5"
 ruff = "^0.9.9"
+transformers = "^4.50.0"
+nltk = "^3.9.1"
+emoji = "^2.14.1"
+cassandra-driver = "^3.29.2"
 
 
 [build-system]
