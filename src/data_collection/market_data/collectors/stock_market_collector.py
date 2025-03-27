@@ -291,11 +291,13 @@ class StockMarketCollector(BaseCollector):
             self.logger.error(f"Market data collection failed: {str(e)}")
         finally:
             self.running = False
+            self.cleanup()  # Clean up resources properly
 
     def stop(self) -> None:
         """Stop the data collection process."""
         self.running = False
         self.logger.info("Stopping market data collection")
+        self.cleanup()  # Ensure resources are cleaned up
 
 
 if __name__ == "__main__":
@@ -330,7 +332,7 @@ if __name__ == "__main__":
                 collector.logger.error(f"Failed to collect data for {symbol}: {str(e)}")
 
         # Replace the original method with our Polygon-specific one
-        collector._collect_symbol_data = collect_with_polygon
+        collector._collect_symbol_data = collect_with_polygon.__get__(collector, StockMarketCollector)
 
         # Start collection
         print("Starting stock market data collection using Polygon API")
