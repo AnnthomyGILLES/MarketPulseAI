@@ -1,5 +1,3 @@
-# src/data_collection/market_data/validation/validation_rules.py
-
 from datetime import datetime, timedelta
 from typing import Dict, Any, Tuple, Optional
 
