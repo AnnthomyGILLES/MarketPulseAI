@@ -1,13 +1,14 @@
 # src/data_collection/market_data/validation/validation_service.py
 
 import json
-import logging
 import time
+import traceback
 from pathlib import Path
 from typing import Dict, Any
 
 import yaml
 from kafka import KafkaConsumer, KafkaProducer
+from loguru import logger
 
 from src.data_collection.market_data.validation.market_data_validator import (
     MarketDataValidator,
@@ -34,14 +35,20 @@ class MarketDataValidationService:
             base_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
             config_path = str(base_dir / "config" / "kafka" / "kafka_config.yaml")
 
+        # Configure loguru logger
+        logger.add(
+            "logs/market_data_validation_{time}.log",
+            rotation="100 MB",
+            retention="30 days",
+            level="INFO",
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} | {message}",
+        )
+
         # Load configuration
         self.config = self._load_config(config_path)
 
-        # Setup logging
-        self.logger = self._setup_logger()
-
         # Initialize validator
-        self.validator = MarketDataValidator(logger=self.logger)
+        self.validator = MarketDataValidator()
 
         # Initialize Kafka consumer and producers
         self.consumer = self._create_consumer()
@@ -75,26 +82,6 @@ class MarketDataValidationService:
         with open(config_file, "r") as f:
             return yaml.safe_load(f)
 
-    def _setup_logger(self) -> logging.Logger:
-        """
-        Set up logging for the validation service.
-
-        Returns:
-            Configured logger
-        """
-        logger = logging.getLogger("market_data_validation_service")
-
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-            logger.setLevel(logging.INFO)
-
-        return logger
-
     def _create_consumer(self) -> KafkaConsumer:
         """
         Create a Kafka consumer for the raw market data topic.
@@ -105,7 +92,7 @@ class MarketDataValidationService:
         bootstrap_servers = self.config["kafka"]["bootstrap_servers_dev"]
         input_topic = self.config["kafka"]["topics"]["market_data_raw"]
 
-        self.logger.info(f"Creating Kafka consumer for topic: {input_topic}")
+        logger.info(f"Creating Kafka consumer for topic: {input_topic}")
 
         return KafkaConsumer(
             input_topic,
@@ -149,7 +136,7 @@ class MarketDataValidationService:
             self.stats["processed"] % 1000 == 0
             or current_time - self.stats["last_report_time"] > 60
         ):
-            self.logger.info(
+            logger.info(
                 f"Processing stats: Processed={self.stats['processed']}, "
                 f"Valid={self.stats['valid']} "
                 f"({self.stats['valid'] / self.stats['processed'] * 100:.1f}%), "
@@ -196,7 +183,7 @@ class MarketDataValidationService:
         Run the validation service, continuously consuming and validating market data.
         """
         self.running = True
-        self.logger.info("Starting market data validation service")
+        logger.info("Starting market data validation service")
 
         try:
             for message in self.consumer:
@@ -207,30 +194,30 @@ class MarketDataValidationService:
                     # Process the message
                     self.process_message(message.value)
                 except Exception as e:
-                    self.logger.error(
-                        f"Error processing message: {str(e)}", exc_info=True
-                    )
+                    logger.error(f"Error processing message: {str(e)}")
+                    logger.error(traceback.format_exc())
 
         except KeyboardInterrupt:
-            self.logger.info("Validation service stopped by user")
+            logger.info("Validation service stopped by user")
         except Exception as e:
-            self.logger.error(f"Validation service failed: {str(e)}", exc_info=True)
+            logger.error(f"Validation service failed: {str(e)}")
+            logger.error(traceback.format_exc())
         finally:
             self.stop()
 
     def stop(self) -> None:
         """Stop the validation service and clean up resources."""
         self.running = False
-        self.logger.info("Stopping market data validation service")
+        logger.info("Stopping market data validation service")
 
         # Close Kafka connections
         try:
             self.consumer.close()
             self.valid_producer.close()
             self.error_producer.close()
-            self.logger.info("Closed Kafka connections")
+            logger.info("Closed Kafka connections")
         except Exception as e:
-            self.logger.error(f"Error closing Kafka connections: {str(e)}")
+            logger.error(f"Error closing Kafka connections: {str(e)}")
 
 
 if __name__ == "__main__":

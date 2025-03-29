@@ -1,5 +1,3 @@
-# src/data_collection/market_data/validation/__init__.py
-
 from src.data_collection.market_data.validation.market_data_validator import (
     MarketDataValidator,
 )
