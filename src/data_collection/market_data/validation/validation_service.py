@@ -1,0 +1,245 @@
+# src/data_collection/market_data/validation/validation_service.py
+
+import json
+import logging
+import time
+from pathlib import Path
+from typing import Dict, Any
+
+import yaml
+from kafka import KafkaConsumer, KafkaProducer
+
+from src.data_collection.market_data.validation.market_data_validator import (
+    MarketDataValidator,
+)
+
+
+class MarketDataValidationService:
+    """
+    Service that consumes raw market data from Kafka, validates it,
+    and produces validated data to another Kafka topic.
+
+    Invalid data is sent to an error topic for monitoring and analysis.
+    """
+
+    def __init__(self, config_path: str = None):
+        """
+        Initialize the validation service.
+
+        Args:
+            config_path: Path to Kafka configuration file
+        """
+        # Set default config path if not provided
+        if config_path is None:
+            base_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
+            config_path = str(base_dir / "config" / "kafka" / "kafka_config.yaml")
+
+        # Load configuration
+        self.config = self._load_config(config_path)
+
+        # Setup logging
+        self.logger = self._setup_logger()
+
+        # Initialize validator
+        self.validator = MarketDataValidator(logger=self.logger)
+
+        # Initialize Kafka consumer and producers
+        self.consumer = self._create_consumer()
+        self.valid_producer = self._create_producer()
+        self.error_producer = self._create_producer()
+
+        # Keep track of processed records for statistics
+        self.stats = {
+            "processed": 0,
+            "valid": 0,
+            "invalid": 0,
+            "last_report_time": time.time(),
+        }
+
+        self.running = False
+
+    def _load_config(self, config_path: str) -> Dict[str, Any]:
+        """
+        Load configuration from a YAML file.
+
+        Args:
+            config_path: Path to the configuration file
+
+        Returns:
+            Dictionary containing configuration
+        """
+        config_file = Path(config_path)
+        if not config_file.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
+        with open(config_file, "r") as f:
+            return yaml.safe_load(f)
+
+    def _setup_logger(self) -> logging.Logger:
+        """
+        Set up logging for the validation service.
+
+        Returns:
+            Configured logger
+        """
+        logger = logging.getLogger("market_data_validation_service")
+
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+
+        return logger
+
+    def _create_consumer(self) -> KafkaConsumer:
+        """
+        Create a Kafka consumer for the raw market data topic.
+
+        Returns:
+            KafkaConsumer instance
+        """
+        bootstrap_servers = self.config["kafka"]["bootstrap_servers_dev"]
+        input_topic = self.config["kafka"]["topics"]["market_data_raw"]
+
+        self.logger.info(f"Creating Kafka consumer for topic: {input_topic}")
+
+        return KafkaConsumer(
+            input_topic,
+            bootstrap_servers=bootstrap_servers,
+            auto_offset_reset="latest",
+            enable_auto_commit=True,
+            group_id="market_data_validation_group",
+            value_deserializer=lambda x: json.loads(x.decode("utf-8")),
+        )
+
+    def _create_producer(self) -> KafkaProducer:
+        """
+        Create a Kafka producer.
+
+        Returns:
+            KafkaProducer instance
+        """
+        bootstrap_servers = self.config["kafka"]["bootstrap_servers_dev"]
+
+        return KafkaProducer(
+            bootstrap_servers=bootstrap_servers,
+            value_serializer=lambda x: json.dumps(x).encode("utf-8"),
+        )
+
+    def _update_and_report_stats(self, is_valid: bool) -> None:
+        """
+        Update processing statistics and periodically log them.
+
+        Args:
+            is_valid: Whether the processed record was valid
+        """
+        self.stats["processed"] += 1
+        if is_valid:
+            self.stats["valid"] += 1
+        else:
+            self.stats["invalid"] += 1
+
+        # Report stats every 1000 records or 60 seconds
+        current_time = time.time()
+        if (
+            self.stats["processed"] % 1000 == 0
+            or current_time - self.stats["last_report_time"] > 60
+        ):
+            self.logger.info(
+                f"Processing stats: Processed={self.stats['processed']}, "
+                f"Valid={self.stats['valid']} "
+                f"({self.stats['valid'] / self.stats['processed'] * 100:.1f}%), "
+                f"Invalid={self.stats['invalid']}"
+            )
+            self.stats["last_report_time"] = current_time
+
+    def process_message(self, message: Dict[str, Any]) -> None:
+        """
+        Process and validate a single message from Kafka.
+
+        Args:
+            message: Dictionary containing market data
+        """
+        is_valid, validated_data, errors = self.validator.validate(message)
+
+        if is_valid:
+            # Send valid data to the validated topic
+            self.valid_producer.send(
+                self.config["kafka"]["topics"]["market_data_validated"],
+                value=validated_data,
+                key=validated_data["symbol"].encode("utf-8")
+                if validated_data.get("symbol")
+                else None,
+            )
+        else:
+            # Add error information to the data
+            error_data = message.copy()
+            error_data["validation_errors"] = errors
+            error_data["validation_timestamp"] = time.time()
+
+            # Send invalid data to the error topic
+            self.error_producer.send(
+                self.config["kafka"]["topics"]["market_data_error"],
+                value=error_data,
+                key=message.get("symbol", "unknown").encode("utf-8"),
+            )
+
+        # Update statistics
+        self._update_and_report_stats(is_valid)
+
+    def run(self) -> None:
+        """
+        Run the validation service, continuously consuming and validating market data.
+        """
+        self.running = True
+        self.logger.info("Starting market data validation service")
+
+        try:
+            for message in self.consumer:
+                if not self.running:
+                    break
+
+                try:
+                    # Process the message
+                    self.process_message(message.value)
+                except Exception as e:
+                    self.logger.error(
+                        f"Error processing message: {str(e)}", exc_info=True
+                    )
+
+        except KeyboardInterrupt:
+            self.logger.info("Validation service stopped by user")
+        except Exception as e:
+            self.logger.error(f"Validation service failed: {str(e)}", exc_info=True)
+        finally:
+            self.stop()
+
+    def stop(self) -> None:
+        """Stop the validation service and clean up resources."""
+        self.running = False
+        self.logger.info("Stopping market data validation service")
+
+        # Close Kafka connections
+        try:
+            self.consumer.close()
+            self.valid_producer.close()
+            self.error_producer.close()
+            self.logger.info("Closed Kafka connections")
+        except Exception as e:
+            self.logger.error(f"Error closing Kafka connections: {str(e)}")
+
+
+if __name__ == "__main__":
+    # Create and run the validation service
+    validation_service = MarketDataValidationService()
+
+    try:
+        validation_service.run()
+    except KeyboardInterrupt:
+        print("Service interrupted. Shutting down...")
+    finally:
+        validation_service.stop()
