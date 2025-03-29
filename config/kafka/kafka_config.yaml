@@ -1,0 +1,50 @@
+# Kafka Broker Configuration
+kafka:
+  bootstrap_servers: "kafka:9092"
+  
+  # Topic configuration
+  topics:
+    # Market data topics
+    market_data_raw: "market-data-raw"
+    market_data_validated: "market-data-validated"
+    market_data_processed: "market-data-processed"
+    
+    # Social media topics
+    twitter_raw: "twitter-raw"
+    reddit_raw: "reddit-raw"
+    news_raw: "news-raw"
+    social_media_validated: "social-media-validated"
+    sentiment_analyzed: "sentiment-analyzed"
+    
+    # Error topics
+    market_data_error: "market-data-error"
+    social_media_error: "social-media-error"
+  
+  # Producer configuration
+  producer:
+    acks: "all"
+    retries: 3
+    batch_size: 16384
+    linger_ms: 5
+    buffer_memory: 33554432
+    key_serializer: "org.apache.kafka.common.serialization.StringSerializer"
+    value_serializer: "org.apache.kafka.common.serialization.StringSerializer"
+  
+  # Consumer configuration
+  consumer:
+    group_id: "market-pulse-ai"
+    auto_offset_reset: "earliest"
+    enable_auto_commit: true
+    auto_commit_interval_ms: 5000
+    key_deserializer: "org.apache.kafka.common.serialization.StringDeserializer"
+    value_deserializer: "org.apache.kafka.common.serialization.StringDeserializer"
+    
+  # Kafka Connect configuration
+  connect:
+    rest_port: 8083
+    config_storage_topic: "connect-configs"
+    offset_storage_topic: "connect-offsets"
+    status_storage_topic: "connect-status"
+    config_storage_replication_factor: 1
+    offset_storage_replication_factor: 1
+    status_storage_replication_factor: 1
