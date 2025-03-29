@@ -2,11 +2,11 @@
 Base class for data collectors that send data to Kafka.
 """
 
-import os
-import yaml
-from typing import Dict, Any, Optional
 import logging
 from pathlib import Path
+from typing import Dict, Any, Optional
+
+import yaml
 
 from src.common.messaging.kafka_producer import KafkaProducerWrapper
 
@@ -14,7 +14,7 @@ from src.common.messaging.kafka_producer import KafkaProducerWrapper
 class BaseCollector:
     """
     Base collector class that provides common functionality for data collectors.
-    
+
     This class handles configuration loading, logging setup, and Kafka integration
     to be inherited by specific collector implementations.
     """
@@ -41,7 +41,7 @@ class BaseCollector:
 
         Returns:
             Dictionary containing configuration
-            
+
         Raises:
             FileNotFoundError: If the configuration file is not found
         """
@@ -60,7 +60,7 @@ class BaseCollector:
             Configured logger
         """
         logger = logging.getLogger(f"{self.collector_name}")
-        
+
         # Configure logging if it hasn't been configured already
         if not logger.handlers:
             handler = logging.StreamHandler()
@@ -70,7 +70,7 @@ class BaseCollector:
             handler.setFormatter(formatter)
             logger.addHandler(handler)
             logger.setLevel(logging.INFO)
-            
+
         return logger
 
     def _get_producer(self, topic: str) -> KafkaProducerWrapper:
@@ -84,16 +84,17 @@ class BaseCollector:
             KafkaProducerWrapper instance
         """
         if topic not in self.kafka_producers:
-            bootstrap_servers = self.config["kafka"]["bootstrap_servers"]
+            bootstrap_servers = self.config["kafka"]["bootstrap_servers_dev"]
             self.kafka_producers[topic] = KafkaProducerWrapper(
-                bootstrap_servers=bootstrap_servers,
-                topic=topic
+                bootstrap_servers=bootstrap_servers, topic=topic
             )
             self.logger.info(f"Created Kafka producer for topic: {topic}")
-        
+
         return self.kafka_producers[topic]
 
-    def send_to_kafka(self, topic: str, message: Dict[str, Any], key: Optional[str] = None) -> bool:
+    def send_to_kafka(
+        self, topic: str, message: Dict[str, Any], key: Optional[str] = None
+    ) -> bool:
         """
         Send a message to a Kafka topic.
 
@@ -116,7 +117,7 @@ class BaseCollector:
     def collect(self) -> None:
         """
         Start the data collection process.
-        
+
         This method should be implemented by subclasses.
         """
         raise NotImplementedError("Subclasses must implement collect()")
@@ -124,7 +125,7 @@ class BaseCollector:
     def stop(self) -> None:
         """
         Stop the data collection process.
-        
+
         This method should be implemented by subclasses.
         """
         raise NotImplementedError("Subclasses must implement stop()")
@@ -138,4 +139,6 @@ class BaseCollector:
                 producer.close()
                 self.logger.info(f"Closed Kafka producer for topic: {topic}")
             except Exception as e:
-                self.logger.error(f"Error closing Kafka producer for topic {topic}: {str(e)}")
+                self.logger.error(
+                    f"Error closing Kafka producer for topic {topic}: {str(e)}"
+                )
