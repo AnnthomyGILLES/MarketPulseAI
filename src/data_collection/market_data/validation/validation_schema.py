@@ -1,9 +1,7 @@
-# src/data_collection/market_data/validation/validation_schema.py
-
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 
 class MarketDataSchema(BaseModel):
@@ -20,39 +18,40 @@ class MarketDataSchema(BaseModel):
     collection_timestamp: str = Field(..., description="When data was collected")
     transactions: Optional[int] = Field(None, description="Number of transactions")
 
-    @validator("symbol")
-    def validate_symbol(cls, v):
-        if not v or not isinstance(v, str) or len(v) > 10:
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol(cls, v: str) -> str:
+        if not v or len(v) > 10:
             raise ValueError("Symbol must be a non-empty string of max 10 characters")
         return v.upper()
 
-    @validator("timestamp", "collection_timestamp")
-    def validate_timestamp(cls, v):
+    @field_validator("timestamp", "collection_timestamp")
+    @classmethod
+    def validate_timestamp(cls, v: str | int | float) -> str:
         try:
-            # Validate ISO format
-            datetime.fromisoformat(v)
-            return v
-        except ValueError:
-            try:
-                # Try parsing as milliseconds timestamp
-                if isinstance(v, (int, float)):
-                    datetime.fromtimestamp(v / 1000)
-                    return datetime.fromtimestamp(v / 1000).isoformat()
-                raise ValueError("Invalid timestamp format")
-            except (ValueError, TypeError):
-                raise ValueError("Invalid timestamp format")
+            if isinstance(v, str):
+                datetime.fromisoformat(v)
+                return v
+            if isinstance(v, (int, float)):
+                return datetime.fromtimestamp(v / 1000).isoformat()
+        except (ValueError, TypeError):
+            pass
+        raise ValueError("Invalid timestamp format")
 
-    @validator("open", "high", "low", "close", "vwap")
-    def validate_prices(cls, v):
-        if v is not None and (v <= 0 or v > 1000000):
+    @field_validator("open", "high", "low", "close", "vwap")
+    @classmethod
+    def validate_prices(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and (v <= 0 or v > 1_000_000):
             raise ValueError("Price values must be positive and reasonable")
         return v
 
-    @validator("volume", "transactions")
-    def validate_counts(cls, v):
-        if v is not None and (v < 0 or v > 10000000000):
+    @field_validator("volume", "transactions")
+    @classmethod
+    def validate_counts(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and (v < 0 or v > 10_000_000_000):
             raise ValueError("Count values must be non-negative and reasonable")
         return v
 
-    class Config:
-        extra = "forbid"  # Forbid extra fields not defined in the schema
+    model_config = ConfigDict(
+        extra="forbid"
+    )  # Forbid extra fields not defined in the schema
