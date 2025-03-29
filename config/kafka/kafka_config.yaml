@@ -1,6 +1,7 @@
 # Kafka Broker Configuration
 kafka:
-  bootstrap_servers: "kafka:9092"
+  bootstrap_servers_prod: "redpanda:29092"
+  bootstrap_servers_dev: "localhost:9093"
   
   # Topic configuration
   topics:
