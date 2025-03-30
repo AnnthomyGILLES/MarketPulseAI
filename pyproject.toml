@@ -19,6 +19,8 @@ nltk = "^3.9.1"
 emoji = "^2.14.1"
 cassandra-driver = "^3.29.2"
 polygon-api-client = "^1.14.4"
+praw = "^7.8.1"
+python-dotenv = "^1.1.0"
 
 
 [build-system]
