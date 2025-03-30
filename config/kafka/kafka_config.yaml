@@ -21,9 +21,6 @@ kafka:
   consumer_groups:
     market_data_validation: "market-data-validation-group"
     reddit_validation: "reddit-validation-group"
-    twitter_validation: "twitter-validation-group"
-    news_validation: "news-validation-group"
-    sentiment_analysis: "sentiment-analysis-group"
 
   # Kafka configuration parameters
   config:
