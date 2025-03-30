@@ -1,5 +1,4 @@
 import json
-from datetime import datetime
 from typing import Dict, Any, List, Tuple
 
 from loguru import logger
@@ -92,40 +91,3 @@ class MarketDataValidator:
                 f"Errors: {validation_errors}"
             )
             return False, data, validation_errors
-
-    def validate_batch(
-        self, data_batch: List[Dict[str, Any]]
-    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """
-        Validate a batch of market data records.
-
-        Args:
-            data_batch: List of dictionaries containing market data
-
-        Returns:
-            Tuple containing:
-                - List of valid data records (cleaned and normalized)
-                - List of invalid data records with error information
-        """
-        valid_records = []
-        invalid_records = []
-
-        for record in data_batch:
-            is_valid, validated_data, errors = self.validate(record)
-
-            if is_valid:
-                valid_records.append(validated_data)
-            else:
-                # Add error information to the record
-                invalid_record = record.copy()
-                invalid_record["validation_errors"] = errors
-                invalid_record["validation_timestamp"] = datetime.now().isoformat()
-                invalid_records.append(invalid_record)
-
-        logger.info(
-            f"Batch validation complete. "
-            f"Valid: {len(valid_records)}/{len(data_batch)} "
-            f"({len(valid_records) / len(data_batch) * 100:.1f}%)"
-        )
-
-        return valid_records, invalid_records
