@@ -7,7 +7,7 @@ from pathlib import Path
 import praw
 from dotenv import load_dotenv
 
-from src.common.messaging.kafka_producer import KafkaProducerWrapper
+from src.data_collection.base_collector import BaseCollector
 
 # Set up logging
 logging.basicConfig(
@@ -16,86 +16,63 @@ logging.basicConfig(
 logger = logging.getLogger("reddit_collector")
 
 
-class RedditCollector:
+class RedditCollector(BaseCollector):
     """
     Collects Reddit posts and comments related to stocks and financial markets,
     then publishes them to Kafka topics for further processing.
     """
 
-    def __init__(self, config=None):
+    def __init__(self, config_path=None):
         """
         Initialize the Reddit collector with configuration.
 
         Args:
-            config (dict, optional): Configuration dictionary. If None, loads from environment.
+            config_path (str, optional): Path to config file. If None, uses default path.
         """
+        # Set default config path if not provided
+        if not config_path:
+            config_path = str(Path(__file__).parents[3] / "config" / "kafka_config.yaml")
+            
+        # Initialize the base collector
+        super().__init__(config_path=config_path, collector_name="reddit_collector")
+        
         # Load environment variables from config directory
         env_path = Path(__file__).parents[4] / "config" / "reddit" / ".env"
         load_dotenv(dotenv_path=env_path)
 
-        self.config = config or {}
-
         # Reddit API credentials
-        self.client_id = self.config.get("REDDIT_CLIENT_ID") or os.getenv(
-            "REDDIT_CLIENT_ID"
-        )
-        self.client_secret = self.config.get("REDDIT_CLIENT_SECRET") or os.getenv(
-            "REDDIT_CLIENT_SECRET"
-        )
-        self.username = self.config.get("REDDIT_USERNAME") or os.getenv(
-            "REDDIT_USERNAME"
-        )
-        self.password = self.config.get("REDDIT_PASSWORD") or os.getenv(
-            "REDDIT_PASSWORD"
-        )
-        self.user_agent = self.config.get("REDDIT_USER_AGENT") or os.getenv(
-            "REDDIT_USER_AGENT", "MarketPulseAI:v1.0 (by /u/your_username)"
-        )
-
-        # Kafka configuration
-        self.kafka_bootstrap_servers = self.config.get(
-            "KAFKA_BOOTSTRAP_SERVERS"
-        ) or os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-        self.kafka_topic = self.config.get("REDDIT_KAFKA_TOPIC") or os.getenv(
-            "REDDIT_KAFKA_TOPIC", "social-media-reddit-raw"
-        )
+        self.client_id = os.getenv("REDDIT_CLIENT_ID")
+        self.client_secret = os.getenv("REDDIT_CLIENT_SECRET")
+        self.username = os.getenv("REDDIT_USERNAME")
+        self.password = os.getenv("REDDIT_PASSWORD")
+        self.user_agent = os.getenv("REDDIT_USER_AGENT", "MarketPulseAI:v1.0 (by /u/your_username)")
 
         # Reddit configuration
-        self.subreddits = self.config.get("REDDIT_SUBREDDITS") or os.getenv(
-            "REDDIT_SUBREDDITS", "wallstreetbets,stocks,investing,StockMarket,options"
-        )
-        self.post_limit = int(
-            self.config.get("REDDIT_POST_LIMIT") or os.getenv("REDDIT_POST_LIMIT", 100)
-        )
-        self.comment_limit = int(
-            self.config.get("REDDIT_COMMENT_LIMIT")
-            or os.getenv("REDDIT_COMMENT_LIMIT", 100)
-        )
-        self.polling_interval = int(
-            self.config.get("REDDIT_POLLING_INTERVAL")
-            or os.getenv("REDDIT_POLLING_INTERVAL", 60)
-        )
+        self.subreddits = os.getenv("REDDIT_SUBREDDITS", "wallstreetbets,stocks,investing,StockMarket,options")
+        self.post_limit = int(os.getenv("REDDIT_POST_LIMIT", 100))
+        self.comment_limit = int(os.getenv("REDDIT_COMMENT_LIMIT", 100))
+        self.polling_interval = int(os.getenv("REDDIT_POLLING_INTERVAL", 60))
+        
+        # Kafka topic
+        self.kafka_topic = os.getenv("REDDIT_KAFKA_TOPIC", "social-media-reddit-raw")
 
-        # Initialize Reddit and Kafka clients
+        # Initialize Reddit client
         try:
             self._init_reddit_client()
-            self._init_kafka_producer()
-            logger.info("Reddit collector initialized successfully")
+            self.logger.info("Reddit collector initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize Reddit collector: {str(e)}")
+            self.logger.error(f"Failed to initialize Reddit collector: {str(e)}")
             raise
 
     def _init_reddit_client(self):
         """Initialize the Reddit PRAW client."""
-        if not all(
-            [
-                self.client_id,
-                self.client_secret,
-                self.user_agent,
-                self.username,
-                self.password,
-            ]
-        ):
+        if not all([
+            self.client_id,
+            self.client_secret,
+            self.user_agent,
+            self.username,
+            self.password,
+        ]):
             raise ValueError("Reddit API credentials not properly configured")
 
         self.reddit = praw.Reddit(
@@ -105,80 +82,7 @@ class RedditCollector:
             username=self.username,
             password=self.password,
         )
-        logger.info("Reddit client initialized")
-
-    def _init_kafka_producer(self):
-        """Initialize the Kafka producer using the KafkaProducerWrapper."""
-        try:
-            bootstrap_servers = self.kafka_bootstrap_servers.split(",")
-            self.producer = KafkaProducerWrapper(
-                bootstrap_servers=bootstrap_servers, topic=self.kafka_topic
-            )
-            logger.info(f"Kafka producer connected to {self.kafka_bootstrap_servers}")
-        except Exception as e:
-            logger.error(f"Failed to initialize Kafka producer: {str(e)}")
-            raise
-
-    def _publish_to_kafka(self, data, key=None):
-        """
-        Publish data to Kafka topic.
-
-        Args:
-            data (dict): Data to publish
-            key (str, optional): Kafka message key (unused with KafkaProducerWrapper)
-
-        Returns:
-            bool: Whether the message was sent successfully
-        """
-        try:
-            success = self.producer.send_message(data)
-            return success
-        except Exception as e:
-            logger.error(f"Failed to publish data to Kafka: {str(e)}")
-            return False
-
-    def collect_posts(self, subreddits=None, time_filter="day"):
-        """
-        Collect posts from specified subreddits.
-
-        Args:
-            subreddits (str, optional): Comma-separated list of subreddits to search
-            time_filter (str, optional): Time filter for posts ('hour', 'day', 'week', 'month', 'year', 'all')
-
-        Returns:
-            int: Number of posts collected
-        """
-        if not subreddits:
-            subreddits = self.subreddits
-
-        subreddit_list = [s.strip() for s in subreddits.split(",")]
-        logger.info(f"Collecting posts from subreddits: {subreddit_list}")
-
-        # Combine subreddits into a single query
-        combined_subreddits = "+".join(subreddit_list)
-        subreddit = self.reddit.subreddit(combined_subreddits)
-
-        posts_count = 0
-
-        try:
-            # Get hot posts
-            for post in subreddit.hot(limit=self.post_limit):
-                post_data = self._extract_post_data(post)
-
-                # Publish to Kafka
-                if post_data:
-                    success = self._publish_to_kafka(
-                        data=post_data, key=post_data.get("id")
-                    )
-                    if success:
-                        posts_count += 1
-
-            logger.info(f"Collected and published {posts_count} posts")
-            return posts_count
-
-        except Exception as e:
-            logger.error(f"Error collecting posts: {str(e)}")
-            return posts_count
+        self.logger.info("Reddit client initialized")
 
     def _extract_post_data(self, post):
         """
@@ -213,59 +117,8 @@ class RedditCollector:
             return post_data
 
         except Exception as e:
-            logger.error(f"Error extracting post data: {str(e)}")
+            self.logger.error(f"Error extracting post data: {str(e)}")
             return None
-
-    def collect_comments(self, post_ids=None, limit=None):
-        """
-        Collect comments from specific posts or from recent posts.
-
-        Args:
-            post_ids (list, optional): List of post IDs to collect comments from
-            limit (int, optional): Maximum number of comments to collect per post
-
-        Returns:
-            int: Number of comments collected
-        """
-        if limit is None:
-            limit = self.comment_limit
-
-        comments_count = 0
-
-        try:
-            # If no post IDs provided, collect from recent posts
-            if not post_ids:
-                subreddit_list = [s.strip() for s in self.subreddits.split(",")]
-                combined_subreddits = "+".join(subreddit_list)
-                subreddit = self.reddit.subreddit(combined_subreddits)
-
-                # Get post IDs from hot posts
-                post_ids = [post.id for post in subreddit.hot(limit=10)]
-
-            # Collect comments for each post
-            for post_id in post_ids:
-                submission = self.reddit.submission(id=post_id)
-                submission.comments.replace_more(
-                    limit=0
-                )  # Replace MoreComments objects with actual comments
-
-                for comment in submission.comments.list()[:limit]:
-                    comment_data = self._extract_comment_data(comment, post_id)
-
-                    # Publish to Kafka
-                    if comment_data:
-                        success = self._publish_to_kafka(
-                            data=comment_data, key=comment_data.get("id")
-                        )
-                        if success:
-                            comments_count += 1
-
-            logger.info(f"Collected and published {comments_count} comments")
-            return comments_count
-
-        except Exception as e:
-            logger.error(f"Error collecting comments: {str(e)}")
-            return comments_count
 
     def _extract_comment_data(self, comment, post_id):
         """
@@ -299,12 +152,109 @@ class RedditCollector:
             return comment_data
 
         except Exception as e:
-            logger.error(f"Error extracting comment data: {str(e)}")
+            self.logger.error(f"Error extracting comment data: {str(e)}")
             return None
-
-    def run(self, continuous=True):
+    
+    def collect_posts(self, subreddits=None, time_filter="day"):
         """
-        Run the collector, either once or continuously.
+        Collect posts from specified subreddits.
+
+        Args:
+            subreddits (str, optional): Comma-separated list of subreddits to search
+            time_filter (str, optional): Time filter for posts ('hour', 'day', 'week', 'month', 'year', 'all')
+
+        Returns:
+            int: Number of posts collected
+        """
+        if not subreddits:
+            subreddits = self.subreddits
+
+        subreddit_list = [s.strip() for s in subreddits.split(",")]
+        self.logger.info(f"Collecting posts from subreddits: {subreddit_list}")
+
+        # Combine subreddits into a single query
+        combined_subreddits = "+".join(subreddit_list)
+        subreddit = self.reddit.subreddit(combined_subreddits)
+
+        posts_count = 0
+
+        try:
+            # Get hot posts
+            for post in subreddit.hot(limit=self.post_limit):
+                post_data = self._extract_post_data(post)
+
+                # Publish to Kafka
+                if post_data:
+                    success = self.send_to_kafka(
+                        topic=self.kafka_topic,
+                        message=post_data,
+                        key=post_data.get("id")
+                    )
+                    if success:
+                        posts_count += 1
+
+            self.logger.info(f"Collected and published {posts_count} posts")
+            return posts_count
+
+        except Exception as e:
+            self.logger.error(f"Error collecting posts: {str(e)}")
+            return posts_count
+
+    def collect_comments(self, post_ids=None, limit=None):
+        """
+        Collect comments from specific posts or from recent posts.
+
+        Args:
+            post_ids (list, optional): List of post IDs to collect comments from
+            limit (int, optional): Maximum number of comments to collect per post
+
+        Returns:
+            int: Number of comments collected
+        """
+        if limit is None:
+            limit = self.comment_limit
+
+        comments_count = 0
+
+        try:
+            # If no post IDs provided, collect from recent posts
+            if not post_ids:
+                subreddit_list = [s.strip() for s in self.subreddits.split(",")]
+                combined_subreddits = "+".join(subreddit_list)
+                subreddit = self.reddit.subreddit(combined_subreddits)
+
+                # Get post IDs from hot posts
+                post_ids = [post.id for post in subreddit.hot(limit=10)]
+
+            # Collect comments for each post
+            for post_id in post_ids:
+                submission = self.reddit.submission(id=post_id)
+                submission.comments.replace_more(limit=0)  # Replace MoreComments objects with actual comments
+
+                for comment in submission.comments.list()[:limit]:
+                    comment_data = self._extract_comment_data(comment, post_id)
+
+                    # Publish to Kafka
+                    if comment_data:
+                        success = self.send_to_kafka(
+                            topic=self.kafka_topic,
+                            message=comment_data,
+                            key=comment_data.get("id")
+                        )
+                        if success:
+                            comments_count += 1
+
+            self.logger.info(f"Collected and published {comments_count} comments")
+            return comments_count
+
+        except Exception as e:
+            self.logger.error(f"Error collecting comments: {str(e)}")
+            return comments_count
+
+    def collect(self, continuous=True):
+        """
+        Implement the collect method from BaseCollector.
+        Start collecting data from Reddit.
 
         Args:
             continuous (bool): Whether to run continuously
@@ -316,13 +266,13 @@ class RedditCollector:
 
         try:
             if continuous:
-                logger.info(
+                self.logger.info(
                     f"Starting continuous collection (polling every {self.polling_interval} seconds)"
                 )
 
                 while True:
                     stats["iterations"] += 1
-                    logger.info(f"Collection iteration {stats['iterations']}")
+                    self.logger.info(f"Collection iteration {stats['iterations']}")
 
                     # Collect posts
                     posts_count = self.collect_posts()
@@ -332,11 +282,11 @@ class RedditCollector:
                     comments_count = self.collect_comments()
                     stats["comments_collected"] += comments_count
 
-                    logger.info(f"Sleeping for {self.polling_interval} seconds")
+                    self.logger.info(f"Sleeping for {self.polling_interval} seconds")
                     time.sleep(self.polling_interval)
             else:
                 # Single run
-                logger.info("Starting one-time collection")
+                self.logger.info("Starting one-time collection")
 
                 # Collect posts
                 posts_count = self.collect_posts()
@@ -346,31 +296,39 @@ class RedditCollector:
                 comments_count = self.collect_comments()
                 stats["comments_collected"] += comments_count
 
-                logger.info("One-time collection completed")
+                self.logger.info("One-time collection completed")
 
             return stats
 
         except KeyboardInterrupt:
-            logger.info("Collection stopped by user")
+            self.logger.info("Collection stopped by user")
             return stats
         except Exception as e:
-            logger.error(f"Error in collection run: {str(e)}")
+            self.logger.error(f"Error in collection run: {str(e)}")
             return stats
 
-    def close(self):
-        """Clean up resources."""
-        try:
-            if hasattr(self, "producer"):
-                self.producer.close()
-                logger.info("Kafka producer closed")
-        except Exception as e:
-            logger.error(f"Error closing resources: {str(e)}")
+    def stop(self):
+        """
+        Implement the stop method from BaseCollector.
+        """
+        self.logger.info("Stopping Reddit collector")
+        # No specific stop actions needed for Reddit collector as it doesn't have background threads
+
+    def cleanup(self):
+        """
+        Clean up resources, extending the base class method.
+        """
+        self.logger.info("Cleaning up Reddit collector resources")
+        # First call the parent cleanup method to handle Kafka producers
+        super().cleanup()
 
 
 # Example usage
 if __name__ == "__main__":
     collector = RedditCollector()
     try:
-        stats = collector.run(continuous=True)
+        stats = collector.collect(continuous=True)
+    except KeyboardInterrupt:
+        pass
     finally:
-        collector.close()
+        collector.cleanup()
