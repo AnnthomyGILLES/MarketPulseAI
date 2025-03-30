@@ -1,8 +1,8 @@
-import json
 import logging
 import os
 import time
 from datetime import datetime
+from pathlib import Path
 
 import praw
 from dotenv import load_dotenv
@@ -29,8 +29,9 @@ class RedditCollector:
         Args:
             config (dict, optional): Configuration dictionary. If None, loads from environment.
         """
-        # Load environment variables
-        load_dotenv()
+        # Load environment variables from config directory
+        env_path = Path(__file__).parents[4] / "config" / "reddit" / ".env"
+        load_dotenv(dotenv_path=env_path)
 
         self.config = config or {}
 
@@ -40,6 +41,12 @@ class RedditCollector:
         )
         self.client_secret = self.config.get("REDDIT_CLIENT_SECRET") or os.getenv(
             "REDDIT_CLIENT_SECRET"
+        )
+        self.username = self.config.get("REDDIT_USERNAME") or os.getenv(
+            "REDDIT_USERNAME"
+        )
+        self.password = self.config.get("REDDIT_PASSWORD") or os.getenv(
+            "REDDIT_PASSWORD"
         )
         self.user_agent = self.config.get("REDDIT_USER_AGENT") or os.getenv(
             "REDDIT_USER_AGENT", "MarketPulseAI:v1.0 (by /u/your_username)"
@@ -80,13 +87,23 @@ class RedditCollector:
 
     def _init_reddit_client(self):
         """Initialize the Reddit PRAW client."""
-        if not all([self.client_id, self.client_secret, self.user_agent]):
+        if not all(
+            [
+                self.client_id,
+                self.client_secret,
+                self.user_agent,
+                self.username,
+                self.password,
+            ]
+        ):
             raise ValueError("Reddit API credentials not properly configured")
 
         self.reddit = praw.Reddit(
             client_id=self.client_id,
             client_secret=self.client_secret,
             user_agent=self.user_agent,
+            username=self.username,
+            password=self.password,
         )
         logger.info("Reddit client initialized")
 
@@ -95,8 +112,7 @@ class RedditCollector:
         try:
             bootstrap_servers = self.kafka_bootstrap_servers.split(",")
             self.producer = KafkaProducerWrapper(
-                bootstrap_servers=bootstrap_servers,
-                topic=self.kafka_topic
+                bootstrap_servers=bootstrap_servers, topic=self.kafka_topic
             )
             logger.info(f"Kafka producer connected to {self.kafka_bootstrap_servers}")
         except Exception as e:
