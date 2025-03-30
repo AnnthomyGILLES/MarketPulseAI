@@ -110,24 +110,6 @@ class StockMarketCollector(BaseCollector):
                     f"Failed to stream aggregated bars for {symbol}: {str(e)}"
                 )
 
-    def _collect_symbol_data(self, symbol: str) -> None:
-        """Collect and send data for a single symbol"""
-        try:
-            trade = self.client.get_last_trade(symbol)
-            data = {
-                "symbol": symbol,
-                "price": trade.price,
-                "size": trade.size,
-                "timestamp": datetime.fromtimestamp(trade.timestamp / 1e9).isoformat(),
-                "collection_timestamp": datetime.now().isoformat(),
-            }
-            self.send_to_kafka(
-                self.config["kafka"]["topics"]["market_data_raw"], data, key=symbol
-            )
-            self.logger.debug(f"Collected data for {symbol}")
-        except Exception as e:
-            self.logger.error(f"Failed to collect data for {symbol}: {str(e)}")
-
     def collect(self) -> None:
         """
         Run the collection process for all symbols.
