@@ -3,12 +3,10 @@ Base class for data collectors that send data to Kafka.
 """
 
 import logging
-from pathlib import Path
 from typing import Dict, Any, Optional
 
-import yaml
-
 from src.common.messaging.kafka_producer import KafkaProducerWrapper
+from src.utils.config import load_config
 
 
 class BaseCollector:
@@ -27,30 +25,10 @@ class BaseCollector:
             config_path: Path to the Kafka configuration file
             collector_name: Name of the collector (used for logging and topics)
         """
-        self.config = self._load_config(config_path)
+        self.config = load_config(config_path)
         self.collector_name = collector_name
         self.logger = self._setup_logger()
         self.kafka_producers = {}  # Dictionary to store Kafka producers by topic
-
-    def _load_config(self, config_path: str) -> Dict[str, Any]:
-        """
-        Load configuration from a YAML file.
-
-        Args:
-            config_path: Path to the configuration file
-
-        Returns:
-            Dictionary containing configuration
-
-        Raises:
-            FileNotFoundError: If the configuration file is not found
-        """
-        config_file = Path(config_path)
-        if not config_file.exists():
-            raise FileNotFoundError(f"Configuration file not found: {config_path}")
-
-        with open(config_file, "r") as f:
-            return yaml.safe_load(f)
 
     def _setup_logger(self) -> logging.Logger:
         """
