@@ -1,26 +1,38 @@
 # Kafka Broker Configuration
 kafka:
-  bootstrap_servers_prod: "redpanda:29092"
-  bootstrap_servers_dev: "localhost:9093"
-  
-  # Topic configuration
+  bootstrap_servers_dev: ["localhost:9093"]
+  bootstrap_servers_prod: ["kafka-1:9092", "kafka-2:9092", "kafka-3:9092"]
+
   topics:
-    # Market data topics
+    # Existing market data topics
     market_data_raw: "market-data-raw"
     market_data_validated: "market-data-validated"
-    market_data_processed: "market-data-processed"
-    
-    # Social media topics
-    twitter_raw: "twitter-raw"
-    reddit_raw: "reddit-raw"
-    news_raw: "news-raw"
-    social_media_validated: "social-media-validated"
-    sentiment_analyzed: "sentiment-analyzed"
-    
-    # Error topics
     market_data_error: "market-data-error"
-    social_media_error: "social-media-error"
-  
+
+    # Reddit social media topics
+    social_media_reddit_raw: "social-media-reddit-raw"
+    social_media_reddit_validated: "social-media-reddit-validated"
+    social_media_reddit_error: "social-media-reddit-error"
+
+    # Combined sentiment topic (for processed sentiment data)
+    sentiment_aggregated: "sentiment-aggregated"
+
+  # Kafka consumer group IDs
+  consumer_groups:
+    market_data_validation: "market-data-validation-group"
+    reddit_validation: "reddit-validation-group"
+    twitter_validation: "twitter-validation-group"
+    news_validation: "news-validation-group"
+    sentiment_analysis: "sentiment-analysis-group"
+
+  # Kafka configuration parameters
+  config:
+    retention_ms: 604800000  # 7 days retention
+    cleanup_policy: "delete"
+    compression_type: "snappy"
+    partitions: 8
+    replication_factor: 3
+
   # Producer configuration
   producer:
     acks: "all"
@@ -30,7 +42,7 @@ kafka:
     buffer_memory: 33554432
     key_serializer: "org.apache.kafka.common.serialization.StringSerializer"
     value_serializer: "org.apache.kafka.common.serialization.StringSerializer"
-  
+
   # Consumer configuration
   consumer:
     group_id: "market-pulse-ai"
@@ -39,7 +51,7 @@ kafka:
     auto_commit_interval_ms: 5000
     key_deserializer: "org.apache.kafka.common.serialization.StringDeserializer"
     value_deserializer: "org.apache.kafka.common.serialization.StringDeserializer"
-    
+
   # Kafka Connect configuration
   connect:
     rest_port: 8083
