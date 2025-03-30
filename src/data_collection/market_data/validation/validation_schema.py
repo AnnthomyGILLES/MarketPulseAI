@@ -14,7 +14,7 @@ class MarketDataSchema(BaseModel):
     close: float = Field(..., description="Closing price or current price")
     volume: Optional[int] = Field(None, description="Trading volume")
     vwap: Optional[float] = Field(None, description="Volume weighted average price")
-    timestamp: str = Field(..., description="Data timestamp")
+    timestamp: int | float = Field(..., description="Data timestamp in milliseconds since epoch")
     collection_timestamp: str = Field(..., description="When data was collected")
     transactions: Optional[int] = Field(None, description="Number of transactions")
 
@@ -25,18 +25,22 @@ class MarketDataSchema(BaseModel):
             raise ValueError("Symbol must be a non-empty string of max 10 characters")
         return v.upper()
 
-    @field_validator("timestamp", "collection_timestamp")
+    @field_validator("timestamp")
     @classmethod
-    def validate_timestamp(cls, v: str | int | float) -> str:
+    def validate_timestamp(cls, v: int | float) -> str:
         try:
-            if isinstance(v, str):
-                datetime.fromisoformat(v)
-                return v
-            if isinstance(v, (int, float)):
-                return datetime.fromtimestamp(v / 1000).isoformat()
+            return datetime.fromtimestamp(v / 1000).isoformat()
         except (ValueError, TypeError):
-            pass
-        raise ValueError("Invalid timestamp format")
+            raise ValueError("Invalid timestamp format, expected milliseconds since epoch")
+
+    @field_validator("collection_timestamp")
+    @classmethod
+    def validate_collection_timestamp(cls, v: str) -> str:
+        try:
+            datetime.fromisoformat(v)
+            return v
+        except (ValueError, TypeError):
+            raise ValueError("Invalid collection_timestamp format, expected ISO format")
 
     @field_validator("open", "high", "low", "close", "vwap")
     @classmethod
