@@ -58,9 +58,7 @@ class RedditCollector(BaseCollector):
         self.client_secret = os.getenv("REDDIT_CLIENT_SECRET")
         self.username = os.getenv("REDDIT_USERNAME")
         self.password = os.getenv("REDDIT_PASSWORD")
-        self.user_agent = os.getenv(
-            "REDDIT_USER_AGENT", "MarketPulseAI:v1.0 (by /u/your_username)"
-        )
+        self.user_agent = os.getenv("REDDIT_USER_AGENT")
 
         return praw.Reddit(
             client_id=self.client_id,
@@ -592,7 +590,7 @@ class RedditCollector(BaseCollector):
 
 if __name__ == "__main__":
     # Create an instance of the enhanced collector
-    collector = EnhancedRedditCollector()
+    collector = RedditCollector()
 
     try:
         # Start the collection process
