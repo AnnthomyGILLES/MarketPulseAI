@@ -38,9 +38,10 @@ class ValidationRules:
 
         return True, None
 
+    # TODO Change to 24 hours for production
     @staticmethod
     def check_timestamp_recency(
-        data: Dict[str, Any], max_age_hours: int = 24
+        data: Dict[str, Any], max_age_hours: int = 48
     ) -> Tuple[bool, Optional[str]]:
         """Check if the data is recent enough."""
         try:
