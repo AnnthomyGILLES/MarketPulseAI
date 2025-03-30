@@ -5,7 +5,6 @@ import traceback
 from pathlib import Path
 from typing import Dict, Any
 
-import yaml
 from loguru import logger
 
 from src.common.messaging.kafka_consumer import KafkaConsumerWrapper
@@ -13,6 +12,7 @@ from src.common.messaging.kafka_producer import KafkaProducerWrapper
 from src.data_collection.market_data.validation.market_data_validator import (
     MarketDataValidator,
 )
+from src.utils.config import load_config
 
 
 class MarketDataValidationService:
@@ -45,7 +45,7 @@ class MarketDataValidationService:
         )
 
         # Load configuration
-        self.config = self._load_config(config_path)
+        self.config = load_config(config_path)
 
         # Initialize validator
         self.validator = MarketDataValidator()
@@ -80,23 +80,6 @@ class MarketDataValidationService:
         }
 
         self.running = False
-
-    def _load_config(self, config_path: str) -> Dict[str, Any]:
-        """
-        Load configuration from a YAML file.
-
-        Args:
-            config_path: Path to the configuration file
-
-        Returns:
-            Dictionary containing configuration
-        """
-        config_file = Path(config_path)
-        if not config_file.exists():
-            raise FileNotFoundError(f"Configuration file not found: {config_path}")
-
-        with open(config_file, "r") as f:
-            return yaml.safe_load(f)
 
     def _update_and_report_stats(self, is_valid: bool) -> None:
         """
