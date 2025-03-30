@@ -42,7 +42,7 @@ class MarketDataValidator:
         # Step 1: Schema validation
         try:
             # Validate and normalize using Pydantic
-            validated_data = MarketDataSchema(**data).dict()
+            validated_data = MarketDataSchema(**data).model_dump()
             logger.debug(f"Schema validation passed for symbol {data.get('symbol')}")
         except ValidationError as e:
             # Extract validation error messages
