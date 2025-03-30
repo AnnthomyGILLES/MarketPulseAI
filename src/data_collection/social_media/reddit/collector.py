@@ -31,11 +31,13 @@ class RedditCollector(BaseCollector):
         """
         # Set default config path if not provided
         if not config_path:
-            config_path = str(Path(__file__).parents[3] / "config" / "kafka_config.yaml")
-            
+            config_path = str(
+                Path(__file__).parents[4] / "config" / "kafka" / "kafka_config.yaml"
+            )
+
         # Initialize the base collector
         super().__init__(config_path=config_path, collector_name="reddit_collector")
-        
+
         # Load environment variables from config directory
         env_path = Path(__file__).parents[4] / "config" / "reddit" / ".env"
         load_dotenv(dotenv_path=env_path)
@@ -45,14 +47,18 @@ class RedditCollector(BaseCollector):
         self.client_secret = os.getenv("REDDIT_CLIENT_SECRET")
         self.username = os.getenv("REDDIT_USERNAME")
         self.password = os.getenv("REDDIT_PASSWORD")
-        self.user_agent = os.getenv("REDDIT_USER_AGENT", "MarketPulseAI:v1.0 (by /u/your_username)")
+        self.user_agent = os.getenv(
+            "REDDIT_USER_AGENT", "MarketPulseAI:v1.0 (by /u/your_username)"
+        )
 
         # Reddit configuration
-        self.subreddits = os.getenv("REDDIT_SUBREDDITS", "wallstreetbets,stocks,investing,StockMarket,options")
+        self.subreddits = os.getenv(
+            "REDDIT_SUBREDDITS", "wallstreetbets,stocks,investing,StockMarket,options"
+        )
         self.post_limit = int(os.getenv("REDDIT_POST_LIMIT", 100))
         self.comment_limit = int(os.getenv("REDDIT_COMMENT_LIMIT", 100))
         self.polling_interval = int(os.getenv("REDDIT_POLLING_INTERVAL", 60))
-        
+
         # Kafka topic
         self.kafka_topic = os.getenv("REDDIT_KAFKA_TOPIC", "social-media-reddit-raw")
 
@@ -66,13 +72,15 @@ class RedditCollector(BaseCollector):
 
     def _init_reddit_client(self):
         """Initialize the Reddit PRAW client."""
-        if not all([
-            self.client_id,
-            self.client_secret,
-            self.user_agent,
-            self.username,
-            self.password,
-        ]):
+        if not all(
+            [
+                self.client_id,
+                self.client_secret,
+                self.user_agent,
+                self.username,
+                self.password,
+            ]
+        ):
             raise ValueError("Reddit API credentials not properly configured")
 
         self.reddit = praw.Reddit(
@@ -154,7 +162,7 @@ class RedditCollector(BaseCollector):
         except Exception as e:
             self.logger.error(f"Error extracting comment data: {str(e)}")
             return None
-    
+
     def collect_posts(self, subreddits=None, time_filter="day"):
         """
         Collect posts from specified subreddits.
@@ -188,7 +196,7 @@ class RedditCollector(BaseCollector):
                     success = self.send_to_kafka(
                         topic=self.kafka_topic,
                         message=post_data,
-                        key=post_data.get("id")
+                        key=post_data.get("id"),
                     )
                     if success:
                         posts_count += 1
@@ -229,7 +237,9 @@ class RedditCollector(BaseCollector):
             # Collect comments for each post
             for post_id in post_ids:
                 submission = self.reddit.submission(id=post_id)
-                submission.comments.replace_more(limit=0)  # Replace MoreComments objects with actual comments
+                submission.comments.replace_more(
+                    limit=0
+                )  # Replace MoreComments objects with actual comments
 
                 for comment in submission.comments.list()[:limit]:
                     comment_data = self._extract_comment_data(comment, post_id)
@@ -239,7 +249,7 @@ class RedditCollector(BaseCollector):
                         success = self.send_to_kafka(
                             topic=self.kafka_topic,
                             message=comment_data,
-                            key=comment_data.get("id")
+                            key=comment_data.get("id"),
                         )
                         if success:
                             comments_count += 1
