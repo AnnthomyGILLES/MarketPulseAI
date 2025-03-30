@@ -1,15 +1,15 @@
 # src/data_collection/market_data/validation/validation_service.py
 
-import json
 import time
 import traceback
 from pathlib import Path
 from typing import Dict, Any
 
 import yaml
-from kafka import KafkaConsumer, KafkaProducer
 from loguru import logger
 
+from src.common.messaging.kafka_consumer import KafkaConsumerWrapper
+from src.common.messaging.kafka_producer import KafkaProducerWrapper
 from src.data_collection.market_data.validation.market_data_validator import (
     MarketDataValidator,
 )
@@ -51,9 +51,25 @@ class MarketDataValidationService:
         self.validator = MarketDataValidator()
 
         # Initialize Kafka consumer and producers
-        self.consumer = self._create_consumer()
-        self.valid_producer = self._create_producer()
-        self.error_producer = self._create_producer()
+        bootstrap_servers = self.config["kafka"]["bootstrap_servers_dev"]
+        input_topic = self.config["kafka"]["topics"]["market_data_raw"]
+
+        logger.info(f"Creating Kafka consumer for topic: {input_topic}")
+        self.consumer = KafkaConsumerWrapper(
+            bootstrap_servers=bootstrap_servers,
+            topic=input_topic,
+            group_id="market_data_validation_group",
+        )
+
+        self.valid_producer = KafkaProducerWrapper(
+            bootstrap_servers=bootstrap_servers,
+            topic=self.config["kafka"]["topics"]["market_data_validated"],
+        )
+
+        self.error_producer = KafkaProducerWrapper(
+            bootstrap_servers=bootstrap_servers,
+            topic=self.config["kafka"]["topics"]["market_data_error"],
+        )
 
         # Keep track of processed records for statistics
         self.stats = {
@@ -81,41 +97,6 @@ class MarketDataValidationService:
 
         with open(config_file, "r") as f:
             return yaml.safe_load(f)
-
-    def _create_consumer(self) -> KafkaConsumer:
-        """
-        Create a Kafka consumer for the raw market data topic.
-
-        Returns:
-            KafkaConsumer instance
-        """
-        bootstrap_servers = self.config["kafka"]["bootstrap_servers_dev"]
-        input_topic = self.config["kafka"]["topics"]["market_data_raw"]
-
-        logger.info(f"Creating Kafka consumer for topic: {input_topic}")
-
-        return KafkaConsumer(
-            input_topic,
-            bootstrap_servers=bootstrap_servers,
-            auto_offset_reset="latest",
-            enable_auto_commit=True,
-            group_id="market_data_validation_group",
-            value_deserializer=lambda x: json.loads(x.decode("utf-8")),
-        )
-
-    def _create_producer(self) -> KafkaProducer:
-        """
-        Create a Kafka producer.
-
-        Returns:
-            KafkaProducer instance
-        """
-        bootstrap_servers = self.config["kafka"]["bootstrap_servers_dev"]
-
-        return KafkaProducer(
-            bootstrap_servers=bootstrap_servers,
-            value_serializer=lambda x: json.dumps(x).encode("utf-8"),
-        )
 
     def _update_and_report_stats(self, is_valid: bool) -> None:
         """
@@ -155,13 +136,7 @@ class MarketDataValidationService:
 
         if is_valid:
             # Send valid data to the validated topic
-            self.valid_producer.send(
-                self.config["kafka"]["topics"]["market_data_validated"],
-                value=validated_data,
-                key=validated_data["symbol"].encode("utf-8")
-                if validated_data.get("symbol")
-                else None,
-            )
+            self.valid_producer.send_message(validated_data)
         else:
             # Add error information to the data
             error_data = message.copy()
@@ -169,11 +144,7 @@ class MarketDataValidationService:
             error_data["validation_timestamp"] = time.time()
 
             # Send invalid data to the error topic
-            self.error_producer.send(
-                self.config["kafka"]["topics"]["market_data_error"],
-                value=error_data,
-                key=message.get("symbol", "unknown").encode("utf-8"),
-            )
+            self.error_producer.send_message(error_data)
 
         # Update statistics
         self._update_and_report_stats(is_valid)
@@ -186,13 +157,13 @@ class MarketDataValidationService:
         logger.info("Starting market data validation service")
 
         try:
-            for message in self.consumer:
+            for message in self.consumer.consume():
                 if not self.running:
                     break
 
                 try:
-                    # Process the message
-                    self.process_message(message.value)
+                    # Process the message from the value field
+                    self.process_message(message["value"])
                 except Exception as e:
                     logger.error(f"Error processing message: {str(e)}")
                     logger.error(traceback.format_exc())
