@@ -58,7 +58,7 @@ class MarketDataValidationService:
         self.consumer = KafkaConsumerWrapper(
             bootstrap_servers=bootstrap_servers,
             topic=input_topic,
-            group_id="market_data_validation_group",
+            group_id=self.config["kafka"]["consumer_groups"]["market_data_validation"],
         )
 
         self.valid_producer = KafkaProducerWrapper(
