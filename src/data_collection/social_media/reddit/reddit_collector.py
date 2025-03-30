@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from src.data_collection.base_collector import BaseCollector
 
 
-class EnhancedRedditCollector(BaseCollector):
+class RedditCollector(BaseCollector):
     """
     Enhanced Reddit collector that supports:
     1. Getting top posts by subreddit
