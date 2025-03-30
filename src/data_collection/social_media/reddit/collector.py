@@ -6,7 +6,8 @@ from datetime import datetime
 
 import praw
 from dotenv import load_dotenv
-from kafka import KafkaProducer
+
+from src.common.messaging.kafka_producer import KafkaProducerWrapper
 
 # Set up logging
 logging.basicConfig(
@@ -90,12 +91,12 @@ class RedditCollector:
         logger.info("Reddit client initialized")
 
     def _init_kafka_producer(self):
-        """Initialize the Kafka producer."""
+        """Initialize the Kafka producer using the KafkaProducerWrapper."""
         try:
-            self.producer = KafkaProducer(
-                bootstrap_servers=self.kafka_bootstrap_servers,
-                value_serializer=lambda x: json.dumps(x).encode("utf-8"),
-                key_serializer=lambda x: x.encode("utf-8") if x else None,
+            bootstrap_servers = self.kafka_bootstrap_servers.split(",")
+            self.producer = KafkaProducerWrapper(
+                bootstrap_servers=bootstrap_servers,
+                topic=self.kafka_topic
             )
             logger.info(f"Kafka producer connected to {self.kafka_bootstrap_servers}")
         except Exception as e:
@@ -108,16 +109,14 @@ class RedditCollector:
 
         Args:
             data (dict): Data to publish
-            key (str, optional): Kafka message key
+            key (str, optional): Kafka message key (unused with KafkaProducerWrapper)
+
+        Returns:
+            bool: Whether the message was sent successfully
         """
         try:
-            future = self.producer.send(self.kafka_topic, key=key, value=data)
-            # Wait for the message to be sent
-            record_metadata = future.get(timeout=10)
-            logger.debug(
-                f"Message sent to {record_metadata.topic} partition {record_metadata.partition} offset {record_metadata.offset}"
-            )
-            return True
+            success = self.producer.send_message(data)
+            return success
         except Exception as e:
             logger.error(f"Failed to publish data to Kafka: {str(e)}")
             return False
@@ -346,7 +345,6 @@ class RedditCollector:
         """Clean up resources."""
         try:
             if hasattr(self, "producer"):
-                self.producer.flush()
                 self.producer.close()
                 logger.info("Kafka producer closed")
         except Exception as e:
