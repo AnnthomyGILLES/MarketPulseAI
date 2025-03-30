@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 from kafka import KafkaConsumer
 from loguru import logger
 
-from common.kafka_utils.serializers import deserialize_message
+from src.common.messaging.serializers import deserialize_message
 
 
 class KafkaConsumerWrapper:
