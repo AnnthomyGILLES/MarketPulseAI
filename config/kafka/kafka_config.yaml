@@ -13,6 +13,11 @@ kafka:
     social_media_reddit_raw: "social-media-reddit-raw"
     social_media_reddit_validated: "social-media-reddit-validated"
     social_media_reddit_error: "social-media-reddit-error"
+    
+    # Additional Reddit topics referenced in the collector code
+    social_media_reddit_comments: "social-media-reddit-comments"
+    social_media_reddit_symbols: "social-media-reddit-symbols"
+    social_media_reddit_rising_historical: "social-media-reddit-rising-historical"
 
     # Combined sentiment topic (for processed sentiment data)
     sentiment_aggregated: "sentiment-aggregated"
@@ -21,6 +26,8 @@ kafka:
   consumer_groups:
     market_data_validation: "market-data-validation-group"
     reddit_validation: "reddit-validation-group"
+    reddit_comments_validation: "reddit-comments-validation-group"
+    reddit_symbols_validation: "reddit-symbols-validation-group"
 
   # Kafka configuration parameters
   config:
