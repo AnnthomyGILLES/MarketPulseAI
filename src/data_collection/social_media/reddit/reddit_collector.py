@@ -199,43 +199,7 @@ class RedditCollector(BaseCollector):
                 "post_age_days": (
                     datetime.now() - datetime.fromtimestamp(post.created_utc)
                 ).days,
-                # Initial velocity metrics (to be updated on re-collection)
-                "last_score": None,
-                "score_velocity": None,
-                "last_comment_count": None,
-                "comment_velocity": None,
-                "is_historical_rising": False,
             }
-
-            # Check if this is a re-collection of a historical post
-            if post.id in self.historical_posts_cache:
-                previous_data = self.historical_posts_cache[post.id]
-
-                # Calculate velocity metrics
-                time_diff_hours = (
-                    datetime.now()
-                    - datetime.fromisoformat(previous_data["collection_timestamp"])
-                ).total_seconds() / 3600
-                if time_diff_hours > 0:
-                    post_data["last_score"] = previous_data["score"]
-                    post_data["score_velocity"] = (
-                        post.score - previous_data["score"]
-                    ) / time_diff_hours
-
-                    post_data["last_comment_count"] = previous_data["num_comments"]
-                    post_data["comment_velocity"] = (
-                        post.num_comments - previous_data["num_comments"]
-                    ) / time_diff_hours
-
-                    # Flag as historical rising if significant growth
-                    if (
-                        post_data["post_age_days"] >= 2
-                        and post_data["score_velocity"] > 5
-                    ):
-                        post_data["is_historical_rising"] = True
-                        self.logger.info(
-                            f"Detected historical rising post: {post.id}, age: {post_data['post_age_days']} days, velocity: {post_data['score_velocity']:.2f} points/hour"
-                        )
 
             # Update cache with current data
             self.historical_posts_cache[post.id] = post_data
@@ -251,16 +215,6 @@ class RedditCollector(BaseCollector):
                 post_data,
                 key=f"reddit_post_{post.id}",
             )
-
-            # If historical rising, send to a special topic
-            if post_data.get("is_historical_rising", False):
-                self.send_to_kafka(
-                    self.config["kafka"]["topics"][
-                        "social_media_reddit_rising_historical"
-                    ],
-                    post_data,
-                    key=f"reddit_rising_{post.id}",
-                )
 
             # For each detected symbol, also send to symbol-specific topic
             for symbol in detected_symbols:
@@ -381,52 +335,6 @@ class RedditCollector(BaseCollector):
             except Exception as e:
                 self.logger.error(f"Error searching for {symbol}: {str(e)}")
 
-    def collect_historical_rising_posts(self):
-        """
-        Collect historical posts that are gaining traction.
-        This specifically targets older posts that are becoming popular days after posting.
-        """
-        self.logger.info("Looking for historical posts with delayed popularity")
-
-        # For each subreddit, look for posts sorted by "rising" over different time periods
-        for subreddit_name in self.subreddits:
-            try:
-                subreddit = self.reddit.subreddit(subreddit_name)
-
-                # Check "rising" posts first
-                rising_posts = list(subreddit.rising(limit=20))
-                for post in rising_posts:
-                    # If post is older than 2 days, it might be a delayed popularity post
-                    post_age_days = (
-                        datetime.now() - datetime.fromtimestamp(post.created_utc)
-                    ).days
-                    if post_age_days >= 2:
-                        self.logger.info(
-                            f"Found rising historical post in r/{subreddit_name}: {post.id}, age: {post_age_days} days"
-                        )
-                        self._process_post(post, collection_method="historical_rising")
-
-                # Also check "controversial" as these sometimes have delayed popularity
-                controversial_posts = list(
-                    subreddit.controversial(time_filter="week", limit=20)
-                )
-                for post in controversial_posts:
-                    post_age_days = (
-                        datetime.now() - datetime.fromtimestamp(post.created_utc)
-                    ).days
-                    if post_age_days >= 2 and post.num_comments > 10:
-                        self.logger.info(
-                            f"Found controversial historical post in r/{subreddit_name}: {post.id}, age: {post_age_days} days"
-                        )
-                        self._process_post(
-                            post, collection_method="historical_controversial"
-                        )
-
-            except Exception as e:
-                self.logger.error(
-                    f"Error collecting historical rising posts from r/{subreddit_name}: {str(e)}"
-                )
-
     def recollect_historical_posts(self):
         """
         Re-collect posts we've seen before to track their engagement growth over time.
@@ -502,8 +410,7 @@ class RedditCollector(BaseCollector):
         Implements a multi-stage collection approach:
         1. Daily posts from specified subreddits
         2. Symbol-specific searches
-        3. Historical rising posts detection
-        4. Re-collection of previously seen posts to track engagement growth
+        3. Re-collection of previously seen posts to track engagement growth
         """
         self.running = True
         self.logger.info(
@@ -516,7 +423,6 @@ class RedditCollector(BaseCollector):
             hours=1
         )  # Start with immediate collection
         last_symbol_search = datetime.now() - timedelta(hours=1)
-        last_historical_rising = datetime.now() - timedelta(hours=1)
         last_recollection = datetime.now() - timedelta(hours=1)
         last_cache_cleanup = datetime.now() - timedelta(days=1)
 
@@ -540,17 +446,12 @@ class RedditCollector(BaseCollector):
                     self.search_for_symbols(time_filters=["day", "week"])
                     last_symbol_search = current_time
 
-                # 3. Historical rising posts (every 6 hours)
-                if (current_time - last_historical_rising).total_seconds() >= 21600:
-                    self.collect_historical_rising_posts()
-                    last_historical_rising = current_time
-
-                # 4. Re-collect historical posts (every 12 hours)
+                # 3. Re-collect historical posts (every 12 hours)
                 if (current_time - last_recollection).total_seconds() >= 43200:
                     self.recollect_historical_posts()
                     last_recollection = current_time
 
-                # 5. Clean up historical cache (every 3 days)
+                # 4. Clean up historical cache (every 3 days)
                 if (current_time - last_cache_cleanup).total_seconds() >= 259200:
                     self.cleanup_historical_cache()
                     last_cache_cleanup = current_time
