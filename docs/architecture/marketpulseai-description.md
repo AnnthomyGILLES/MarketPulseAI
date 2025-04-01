@@ -31,7 +31,8 @@ This combination delivers a more complete picture of what's driving stock prices
 - **Processing**: Apache Spark (Stream Processing)
 - **Storage**: 
   - Redis (real-time features/online store)
-  - Cassandra (historical data/offline store)
+  - Cassandra (historical market data/offline store)
+  - Elasticsearch (social media content/text data)
 
 ### Machine Learning & Analytics
 - **Market Analysis**: Custom deep learning models
@@ -126,7 +127,7 @@ MarketPulseAI follows a modern data engineering pattern with clear separation of
   - Time-decay functions for recency prioritization
   - Confidence scoring based on volume and consistency
 
-### 4️⃣ Feature Store
+### 4️⃣ Storage Layer
 
 #### Online Feature Storage (Redis)
 - **Implementation**:
@@ -142,7 +143,7 @@ MarketPulseAI follows a modern data engineering pattern with clear separation of
   - Memory management policies for high-velocity data
   - Cache eviction strategies for optimal resource utilization
 
-#### Historical Feature Storage (Cassandra)
+#### Historical Market Data (Cassandra)
 - **Schema Design**:
   - Time-series optimized schema
   - Partition keys based on symbol and time ranges
@@ -155,6 +156,26 @@ MarketPulseAI follows a modern data engineering pattern with clear separation of
   - Tiered storage based on data age
   - Compression strategies for historical data
   - Automated archiving workflows
+
+#### Social Media Content (Elasticsearch)
+- **Implementation**:
+  - Distributed Elasticsearch cluster for high-availability
+  - Custom analyzers for financial terminology
+  - Optimized index templates for social media data
+- **Index Design**:
+  - Time-based indices with rolling strategy
+  - Dedicated mappings for Twitter and Reddit content
+  - Field-level optimizations for search performance
+- **Search Capabilities**:
+  - Full-text search across social content
+  - Faceted filtering by symbol, sentiment, and source
+  - Relevance scoring customized for financial context
+  - Complex query support for trend identification
+- **Performance Features**:
+  - Query caching for common search patterns
+  - Shard allocation strategies for balanced cluster
+  - Index lifecycle management for efficient storage
+  - Percolator queries for real-time alert generation
 
 ### 5️⃣ Signal Integration & Analytics
 
@@ -238,6 +259,7 @@ MarketPulseAI follows a modern data engineering pattern with clear separation of
   - Signal contribution breakdown
   - Symbol comparison views
   - Alert configuration interface
+  - Social media trend exploration with Elasticsearch-powered search
 
 ### 8️⃣ Comprehensive Monitoring & Feedback
 
@@ -276,10 +298,12 @@ MarketPulseAI was built with specific engineering principles in mind:
   - Spark executor memory allocation balanced for stream processing
   - Custom serialization implemented for Redis caching efficiency
   - Query patterns optimized for Cassandra's distributed architecture
+  - Elasticsearch mappings fine-tuned for financial terminology
 
 - **Exploration of Advanced Technologies**: The project intentionally incorporates technologies across the modern data engineering landscape:
   - Stream processing with Spark
   - Distributed databases with Cassandra
+  - Full-text search with Elasticsearch
   - In-memory data stores with Redis
   - Container orchestration with Kubernetes
   - Observability stacks with Prometheus/Grafana
@@ -305,6 +329,7 @@ MarketPulseAI was built with specific engineering principles in mind:
 - **Scalability**: Horizontal scaling capabilities for all components
 - **Prediction Window**: Various time horizons from minutes to days
 - **Adaptability**: Self-adjusting weights based on market conditions
+- **Search Performance**: Sub-second search across millions of social media documents
 
 ## 🔮 Future Development Roadmap
 
@@ -318,6 +343,7 @@ MarketPulseAI was built with specific engineering principles in mind:
 - **Performance Optimization**: Pipeline fine-tuning for improved throughput and reduced latency
   - Custom Spark operators for financial calculations
   - Redis cluster optimization
+  - Elasticsearch query optimization
   - Network topology improvements
   - Query caching strategies
 
@@ -326,6 +352,7 @@ MarketPulseAI was built with specific engineering principles in mind:
   - Correlation matrices for multi-asset analysis
   - Prediction confidence visualization
   - Signal contribution breakdown charts
+  - Social sentiment heat maps powered by Elasticsearch aggregations
 
 ### Medium-Term Initiatives
 - **Cloud Deployment**: Migration to cloud-native implementation
@@ -333,12 +360,14 @@ MarketPulseAI was built with specific engineering principles in mind:
   - Multi-region deployment
   - Cost optimization strategies
   - Managed service integration where appropriate
+  - Elasticsearch Service or OpenSearch considerations
 
 - **Advanced ML Capabilities**: Exploration of cutting-edge techniques
   - Reinforcement learning for dynamic trading strategies
   - Explainable AI components for prediction justification
   - Transfer learning from related financial domains
   - Adaptive models for varying market conditions
+  - Vector search in Elasticsearch for semantic similarity
 
 - **Platform Expansion**: Broader market coverage and analysis types
   - Multi-asset class support (options, futures, forex)
@@ -364,6 +393,7 @@ MarketPulseAI was built with specific engineering principles in mind:
   - Network effects modeling for interrelated stocks
   - Regime change detection and adaptation
   - Multi-modal data fusion (text, time-series, alternative)
+  - Knowledge graph integration with Elasticsearch
 
 ## 🧠 Key Insights & Learnings
 
@@ -383,6 +413,8 @@ Throughout the development of MarketPulseAI, several fascinating insights emerge
 
 - **Scaling Considerations**: Horizontal scaling requirements varied significantly across components, with sentiment analysis requiring more computational resources than expected
 
+- **Search vs. Database Tradeoffs**: Elasticsearch provides superior text search capabilities compared to traditional databases, but requires careful tuning for optimal performance
+
 ## 👋 Open Collaboration & Community
 
 MarketPulseAI is committed to "building in public" - sharing not just successes, but also challenges, roadblocks, design decisions, and overall engineering thought processes. This transparency aims to provide realistic insights into complex system development and foster community collaboration.
@@ -392,12 +424,14 @@ We welcome input from:
 - Data engineers exploring stream processing architectures
 - Financial analysts with domain expertise
 - DevOps specialists with insights on system reliability
+- Search engineers with Elasticsearch optimization experience
 
 Connect with the project to suggest:
 - Additional data sources
 - Alternative modeling approaches
 - Architecture improvements
 - Visualization enhancements
+- Search optimization strategies
 
 ## 📚 Additional Resources
 
@@ -410,4 +444,4 @@ Connect with the project to suggest:
 
 *MarketPulseAI represents the intersection of financial markets, artificial intelligence, and distributed systems engineering. It demonstrates how modern data pipelines can transform raw market data and unstructured social content into actionable trading insights with minimal latency.*
 
-#DataEngineering #MachineLearning #FinTech #RealTimeAnalytics #NLP #StreamProcessing #BuildInPublic
+#DataEngineering #MachineLearning #FinTech #RealTimeAnalytics #NLP #StreamProcessing #Elasticsearch #BuildInPublic
