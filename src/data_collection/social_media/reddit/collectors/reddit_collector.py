@@ -37,9 +37,9 @@ class RedditCollector(BaseCollector):
         self.historical_window = 30  # days
 
         # Collection limits
-        self.posts_per_subreddit = 50
-        self.comments_per_post = 30
-        self.posts_per_symbol = 25
+        self.posts_per_subreddit = 1
+        self.comments_per_post = 2
+        self.posts_per_symbol = 1
 
         # Post tracking settings
         self.historical_posts_cache = {}  # To store IDs of previously collected posts
