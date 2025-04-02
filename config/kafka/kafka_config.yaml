@@ -13,10 +13,13 @@ kafka:
     social_media_reddit_raw: "social-media-reddit-raw"
     social_media_reddit_validated: "social-media-reddit-validated"
     social_media_reddit_error: "social-media-reddit-error"
-    
+    social_media_reddit_invalid: "social-media-reddit-invalid"
+
     # Additional Reddit topics referenced in the collector code
     social_media_reddit_comments: "social-media-reddit-comments"
+    social_media_reddit_comments_validated: "social-media-reddit-comments-validated"
     social_media_reddit_symbols: "social-media-reddit-symbols"
+    social_media_reddit_symbols_validated: "social-media-reddit-symbols-validated"
     social_media_reddit_rising_historical: "social-media-reddit-rising-historical"
 
     # Combined sentiment topic (for processed sentiment data)
