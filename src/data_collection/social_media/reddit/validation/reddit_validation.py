@@ -197,18 +197,6 @@ class RedditComment(RedditPostBase):
         return v
 
 
-class WarningCountHandler:
-    """Custom log handler to count warnings."""
-
-    def __init__(self):
-        self.warning_count = 0
-
-    def __call__(self, record):
-        if record["level"].name == "WARNING":
-            self.warning_count += 1
-        return True
-
-
 class RedditDataValidator:
     """Validates and processes Reddit data."""
 
@@ -216,11 +204,6 @@ class RedditDataValidator:
         """Initialize the validator."""
         self.valid_count = 0
         self.invalid_count = 0
-        self.warning_count = 0
-
-        # Setup logger with custom handler to track warnings
-        self.warning_handler = WarningCountHandler()
-        logger.add(self.warning_handler)
 
     def validate_reddit_data(self, data: Dict[str, Any]) -> Union[Dict[str, Any], None]:
         """
@@ -233,9 +216,6 @@ class RedditDataValidator:
             The validated data if valid, None otherwise.
         """
         try:
-            # Reset warning count for this validation
-            self.warning_handler.warning_count = 0
-
             # Determine if this is a post or comment
             is_post = data.get("content_type") == "post"
 
@@ -247,10 +227,6 @@ class RedditDataValidator:
 
             # Track validation success
             self.valid_count += 1
-
-            # Track warnings
-            if self.warning_handler.warning_count > 0:
-                self.warning_count += 1
 
             return validated_data
 
