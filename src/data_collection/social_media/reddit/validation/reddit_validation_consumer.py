@@ -41,7 +41,9 @@ class RedditValidationConsumer:
             config_path: Path to the Kafka configuration file
         """
         if config_path is None:
-            base_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
+            base_dir = (
+                Path(__file__).resolve().parent.parent.parent.parent.parent.parent
+            )
             config_path = str(base_dir / "config" / "kafka" / "kafka_config.yaml")
 
         self.config = load_config(config_path)
@@ -61,20 +63,36 @@ class RedditValidationConsumer:
     def _initialize_consumers(self):
         """Initialize Kafka consumers for Reddit data topics."""
         bootstrap_servers = self.config["kafka"]["bootstrap_servers_dev"]
-        topics = [
+
+        # Define input topics to consume from
+        input_topics = [
             self.config["kafka"]["topics"]["social_media_reddit_raw"],
             self.config["kafka"]["topics"]["social_media_reddit_comments"],
             self.config["kafka"]["topics"]["social_media_reddit_symbols"],
         ]
 
-        for topic in topics:
-            consumer_group = f"reddit_validator_{topic.replace('.', '_')}"
+        # Map topics to consumer groups
+        topic_to_group = {
+            self.config["kafka"]["topics"]["social_media_reddit_raw"]: self.config[
+                "kafka"
+            ]["consumer_groups"]["reddit_validation"],
+            self.config["kafka"]["topics"]["social_media_reddit_comments"]: self.config[
+                "kafka"
+            ]["consumer_groups"]["reddit_comments_validation"],
+            self.config["kafka"]["topics"]["social_media_reddit_symbols"]: self.config[
+                "kafka"
+            ]["consumer_groups"]["reddit_symbols_validation"],
+        }
+
+        for topic in input_topics:
+            consumer_group = topic_to_group.get(
+                topic, f"reddit_validator_{topic.replace('.', '_').replace('-', '_')}"
+            )
 
             self.consumers[topic] = KafkaConsumerWrapper(
                 bootstrap_servers=bootstrap_servers,
                 topic=topic,
                 group_id=consumer_group,
-                auto_offset_reset="earliest",
             )
 
             logger.info(f"Initialized consumer for topic: {topic}")
@@ -93,6 +111,7 @@ class RedditValidationConsumer:
                 "social_media_reddit_symbols_validated"
             ],
             "invalid": self.config["kafka"]["topics"]["social_media_reddit_invalid"],
+            "error": self.config["kafka"]["topics"]["social_media_reddit_error"],
         }
 
         for topic_key, topic_name in validated_topics.items():
@@ -112,6 +131,10 @@ class RedditValidationConsumer:
         try:
             # Extract the actual data from the message
             data = message["value"]
+            source_topic = message["topic"]
+
+            # Add metadata about the source topic
+            data["source_topic"] = source_topic
 
             # Validate the data
             validated_data = self.validator.validate_reddit_data(data)
@@ -145,10 +168,23 @@ class RedditValidationConsumer:
                     logger.error(
                         f"Failed to send validated data to Kafka: {data.get('id', 'unknown')}"
                     )
+                    # Send to error topic with error information
+                    error_data = data.copy()
+                    error_data["error_type"] = "kafka_producer_failure"
+                    error_data["error_message"] = (
+                        "Failed to send validated data to Kafka"
+                    )
+                    self.producers["error"].send_message(
+                        error_data, key=f"error_{data.get('id', 'unknown')}"
+                    )
             else:
                 # Send invalid data to the invalid topic for investigation
+                invalid_data = data.copy()
+                invalid_data["validation_failed"] = True
+                invalid_data["validation_timestamp"] = time.time()
+
                 self.producers["invalid"].send_message(
-                    data, key=f"invalid_{data.get('id', 'unknown')}"
+                    invalid_data, key=f"invalid_{data.get('id', 'unknown')}"
                 )
 
             self.processed_count += 1
@@ -168,6 +204,20 @@ class RedditValidationConsumer:
 
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}")
+            # Send to error topic with error information
+            try:
+                error_data = {
+                    "original_message": message.get("value", {}),
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "error_timestamp": time.time(),
+                    "source_topic": message.get("topic", "unknown"),
+                }
+                self.producers["error"].send_message(
+                    error_data, key=f"error_processing_{time.time()}"
+                )
+            except Exception as send_error:
+                logger.error(f"Failed to send error to Kafka: {str(send_error)}")
 
     def start(self):
         """Start consuming and processing messages."""
@@ -178,7 +228,7 @@ class RedditValidationConsumer:
             self.running = True
             logger.info("Starting Reddit validation consumer")
 
-            # Process messages from all topics
+            # Process messages from all topics in a round-robin fashion
             while self.running:
                 for topic, consumer in self.consumers.items():
                     for message in consumer.consume():
@@ -186,6 +236,8 @@ class RedditValidationConsumer:
                             break
 
                         self.process_message(message)
+                        # Break after processing one message to move to the next topic
+                        break
 
                 # Small sleep to prevent CPU spinning
                 time.sleep(0.1)
