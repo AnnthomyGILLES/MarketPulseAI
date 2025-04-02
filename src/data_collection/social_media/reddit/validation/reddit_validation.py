@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any, Union
 
 from loguru import logger
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class RedditPostBase(BaseModel):
@@ -20,7 +20,8 @@ class RedditPostBase(BaseModel):
     source: str = Field(..., description="Source platform, should be 'reddit'")
     collection_timestamp: str
 
-    @validator("collection_timestamp")
+    @field_validator("collection_timestamp")
+    @classmethod
     def validate_collection_timestamp(cls, v):
         """Validate that collection_timestamp is in ISO format."""
         try:
@@ -29,7 +30,8 @@ class RedditPostBase(BaseModel):
         except ValueError:
             raise ValueError("collection_timestamp must be in ISO format")
 
-    @validator("source")
+    @field_validator("source")
+    @classmethod
     def validate_source(cls, v):
         """Validate that source is 'reddit'."""
         if v != "reddit":
@@ -57,14 +59,16 @@ class RedditPost(RedditPostBase):
     post_age_days: int
     detected_symbols: Optional[List[str]] = None
 
-    @validator("content_type")
+    @field_validator("content_type")
+    @classmethod
     def validate_content_type(cls, v):
         """Validate that content_type is 'post'."""
         if v != "post":
             raise ValueError("content_type must be 'post'")
         return v
 
-    @validator("post_created_datetime")
+    @field_validator("post_created_datetime")
+    @classmethod
     def validate_post_created_datetime(cls, v):
         """Validate that post_created_datetime is in ISO format."""
         try:
@@ -73,72 +77,75 @@ class RedditPost(RedditPostBase):
         except ValueError:
             raise ValueError("post_created_datetime must be in ISO format")
 
-    @validator("score")
+    @field_validator("score")
+    @classmethod
     def validate_score(cls, v):
         """Validate that score is a reasonable value."""
-        if v < 0 or v > 1000000:  # Reasonable upper bound for Reddit posts
+        if v < 0 or v > 1_000_000:  # Reasonable upper bound for Reddit posts
             logger.warning(f"Unusual score value: {v}")
         return v
 
-    @validator("upvote_ratio")
+    @field_validator("upvote_ratio")
+    @classmethod
     def validate_upvote_ratio(cls, v):
         """Validate that upvote_ratio is between 0 and 1."""
         if v < 0 or v > 1:
             raise ValueError("upvote_ratio must be between 0 and 1")
         return v
 
-    @validator("num_comments")
+    @field_validator("num_comments")
+    @classmethod
     def validate_num_comments(cls, v):
         """Validate that num_comments is a non-negative integer."""
         if v < 0:
             raise ValueError("num_comments must be non-negative")
         return v
 
-    @validator("post_age_days")
+    @field_validator("post_age_days")
+    @classmethod
     def validate_post_age_days(cls, v):
         """Validate that post_age_days is reasonable."""
         if v < 0 or v > 365 * 10:  # Cap at 10 years to catch timestamp errors
             raise ValueError(f"post_age_days has unusual value: {v}")
         return v
 
-    @validator("detected_symbols")
+    @field_validator("detected_symbols")
+    @classmethod
     def validate_detected_symbols(cls, v):
         """Validate that detected_symbols contains valid stock symbols."""
         if v is None:
             return v
-
         # Basic validation - stock symbols are typically 1-5 uppercase letters
         for symbol in v:
             if not re.match(r"^[A-Z]{1,5}$", symbol):
                 logger.warning(f"Potentially invalid stock symbol: {symbol}")
-
         return v
 
-    @root_validator
-    def check_content_quality(cls, values):
+    @model_validator(mode="after")
+    @classmethod
+    def check_content_quality(cls, model: "RedditPost"):
         """Perform quality checks on the content."""
-        title = values.get("title", "")
-        selftext = values.get("selftext", "")
+        title = model.title or ""
+        selftext = model.selftext or ""
 
         # Check for minimum content length
         if len(title) < 3:
             logger.warning(f"Very short post title: '{title}'")
 
         # Check if the post has meaningful content
-        if len(selftext) < 10 and values.get("is_self", False):
+        if len(selftext) < 10 and model.is_self:
             logger.warning("Self post with minimal content")
 
         # Check for deleted content
         if title == "[deleted]" or selftext == "[deleted]":
             logger.warning("Post contains deleted content")
 
-        return values
+        return model
 
 
 class RedditComment(RedditPostBase):
     """Schema for Reddit comments with validation."""
 
-    id: str
     post_id: str
     body: str
     author: str
@@ -149,7 +156,8 @@ class RedditComment(RedditPostBase):
     parent_id: str
     detected_symbols: Optional[List[str]] = None
 
-    @validator("comment_created_datetime")
+    @field_validator("comment_created_datetime")
+    @classmethod
     def validate_comment_created_datetime(cls, v):
         """Validate that comment_created_datetime is in ISO format."""
         try:
@@ -158,14 +166,16 @@ class RedditComment(RedditPostBase):
         except ValueError:
             raise ValueError("comment_created_datetime must be in ISO format")
 
-    @validator("score")
+    @field_validator("score")
+    @classmethod
     def validate_score(cls, v):
         """Validate that score is a reasonable value."""
-        if v < -1000 or v > 100000:  # Reasonable bounds for Reddit comments
+        if v < -1000 or v > 100_000:  # Reasonable bounds for Reddit comments
             logger.warning(f"Unusual comment score value: {v}")
         return v
 
-    @validator("body")
+    @field_validator("body")
+    @classmethod
     def validate_body(cls, v):
         """Validate comment body."""
         if len(v) < 1:
@@ -174,18 +184,29 @@ class RedditComment(RedditPostBase):
             logger.warning("Deleted comment")
         return v
 
-    @validator("detected_symbols")
+    @field_validator("detected_symbols")
+    @classmethod
     def validate_detected_symbols(cls, v):
         """Validate that detected_symbols contains valid stock symbols."""
         if v is None:
             return v
-
         # Basic validation - stock symbols are typically 1-5 uppercase letters
         for symbol in v:
             if not re.match(r"^[A-Z]{1,5}$", symbol):
                 logger.warning(f"Potentially invalid stock symbol: {symbol}")
-
         return v
+
+
+class WarningCountHandler:
+    """Custom log handler to count warnings."""
+
+    def __init__(self):
+        self.warning_count = 0
+
+    def __call__(self, record):
+        if record["level"].name == "WARNING":
+            self.warning_count += 1
+        return True
 
 
 class RedditDataValidator:
@@ -216,13 +237,13 @@ class RedditDataValidator:
             self.warning_handler.warning_count = 0
 
             # Determine if this is a post or comment
-            is_post = "content_type" in data and data["content_type"] == "post"
+            is_post = data.get("content_type") == "post"
 
             # Validate against the appropriate schema
             if is_post:
-                validated_data = RedditPost(**data).dict()
+                validated_data = RedditPost(**data).model_dump()
             else:
-                validated_data = RedditComment(**data).dict()
+                validated_data = RedditComment(**data).model_dump()
 
             # Track validation success
             self.valid_count += 1
@@ -253,18 +274,6 @@ class RedditDataValidator:
         self.valid_count = 0
         self.invalid_count = 0
         self.warning_count = 0
-
-
-class WarningCountHandler:
-    """Custom log handler to count warnings."""
-
-    def __init__(self):
-        self.warning_count = 0
-
-    def __call__(self, record):
-        if record["level"].name == "WARNING":
-            self.warning_count += 1
-        return True
 
 
 class RedditDataEnricher:
