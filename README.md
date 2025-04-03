@@ -31,7 +31,7 @@ Think of it as having two eyes on the market: one watching actual prices and tra
 MarketPulseAI follows a modern data engineering pattern with clear separation of concerns:
 
 <p align="center">
-  <img src="docs/architecture/system_architecture.png" alt="MarketPulseAI Architecture" width="800"/>
+  <img src="docs/architecture/first_linkedin_post_detailed.png" alt="MarketPulseAI Architecture" width="800"/>
 </p>
 
 
