@@ -109,10 +109,16 @@ class RedditValidationConsumer:
                     topics=[topic],  # Pass the topic as a list to the 'topics' argument
                     bootstrap_servers=bootstrap_servers,
                     group_id=group_id,
+                    # Pass other consumer-specific configs from self.config['kafka']['consumer_config'] if needed
+                    # e.g., fetch_max_wait_ms=self.config['kafka']['consumer_config'].get('fetch_max_wait_ms', 500)
                 )
                 logger.info(
                     f"Initialized consumer for topic '{topic}' with group '{group_id}'"
                 )
+                # Removed check for consumer._running as it's no longer part of the simplified wrapper
+                # # Verify the consumer is running properly
+                # if not self.consumers[topic]._running:
+                #     logger.warning(f"Consumer for topic '{topic}' is not in running state after initialization!")
 
             # Define output topics
             output_topics = {
@@ -341,10 +347,7 @@ class RedditValidationConsumer:
         self.running = True
         logger.info("Starting Reddit validation consumer...")
 
-        # Subscribe consumers (assuming wrapper handles this or provides a method)
-        # Example:
-        # for topic, consumer in self.consumers.items():
-        #     consumer.subscribe() # Or similar method
+        # Subscription happens during KafkaConsumerWrapper initialization
 
         try:
             while self.running:
@@ -352,15 +355,18 @@ class RedditValidationConsumer:
                 # Poll each consumer round-robin
                 for topic, consumer in self.consumers.items():
                     if not self.running:
-                        break  # Check flag before blocking poll
+                        break  # Check flag before potentially blocking call
 
-                    logger.debug(f"Polling consumer for topic: {topic}")  # Added log
-                    # Use a short non-blocking timeout to poll messages
+                    logger.debug(f"Polling consumer for topic: {topic}")
+                    # Removed log checking consumer._running state
+                    # logger.debug(f"Consumer _running state: {consumer._running}")
+
+                    # Get the message generator. consumer.consume() now directly yields from _message_generator
+                    # which iterates over the underlying kafka-python consumer.
+                    # This iterator blocks based on fetch_max_wait_ms or until a message arrives or it's closed.
                     message_generator = consumer.consume()
 
-                    logger.debug(
-                        f"Got message generator for topic: {topic}"
-                    )  # Added log
+                    logger.debug(f"Got message generator for topic: {topic}")
 
                     # Process a batch of messages from this consumer
                     batch_count = 0
@@ -368,47 +374,56 @@ class RedditValidationConsumer:
                         10  # Process up to this many messages per consumer per loop
                     )
 
-                    try:  # Added try/except around generator iteration
-                        for msg in message_generator:
+                    try:
+                        for msg in (
+                            message_generator
+                        ):  # This loop will block or yield messages
                             logger.debug(
                                 f"Received from generator (topic: {topic}): {'Message' if msg else 'None/Timeout'}"
-                            )  # Added log
-                            if not self.running:
+                            )
+                            if not self.running:  # Check flag again in case stop() was called during iteration
                                 break
 
-                            if msg is not None:  # Skip None messages (errors, etc.)
+                            if msg is not None:  # Process valid messages
                                 self.process_message(msg)
-                                message_processed_in_cycle = True  # Use the cycle flag
+                                message_processed_in_cycle = True
                                 batch_count += 1
 
                                 if batch_count >= max_batch_size:
                                     logger.debug(
                                         f"Reached max batch size ({max_batch_size}) for topic: {topic}"
-                                    )  # Added log
-                                    break  # Process other consumers after batch limit
-                            # else: # Optional: log when None/timeout occurs from generator
-                            # logger.debug(f"Generator yielded None/timed out for topic: {topic}")
+                                    )
+                                    break  # Move to the next consumer
+                            # else: # A None yield could indicate an error handled within the wrapper or timeout
+                            #     logger.debug(f"Generator yielded None for topic: {topic}, possibly due to timeout or deserialization error.")
+                            #     # We might not need to break here, let the loop continue polling
 
                         # Check running flag after iterating the generator for this topic
                         if not self.running:
                             logger.info(
                                 f"Running flag false after processing generator for topic: {topic}"
                             )
-                            break
+                            break  # Exit the outer loop over consumers
 
+                    except StopIteration:
+                        # This might occur if the consumer is closed externally or if consumer_timeout_ms is set and reached
+                        logger.info(
+                            f"Message generator for topic {topic} stopped (StopIteration)."
+                        )
+                        if not self.running:  # Check if stop was requested
+                            break
+                        # Otherwise, continue to the next consumer or next cycle
                     except Exception as e:
                         logger.exception(
                             f"Error iterating message generator for topic {topic}: {e}"
                         )
                         # Decide if we should stop or continue polling other topics
                         self.stop()  # Example: stop on generator error
-                        break
+                        break  # Exit the outer loop over consumers
 
                 # If no messages were processed in a full loop across ALL consumers, sleep briefly
                 if not message_processed_in_cycle and self.running:
-                    logger.debug(
-                        "No messages processed in this cycle, sleeping."
-                    )  # Added log
+                    logger.debug("No messages processed in this cycle, sleeping.")
                     time.sleep(0.5)  # Prevent tight loop when idle
 
                 # Log stats periodically
@@ -416,29 +431,30 @@ class RedditValidationConsumer:
 
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt detected. Initiating shutdown.")
-            self.stop()
+            # self.stop() will be called in the finally block
         except Exception as e:
             logger.exception(f"Critical error in consumer run loop: {e}")
-            self.stop()  # Attempt graceful shutdown on unexpected errors
+            # self.stop() will be called in the finally block
         finally:
-            logger.info("Consumer run loop exited.")
-            # Ensure cleanup happens even if stop() wasn't called explicitly
-            if self.running:
-                self.stop()
+            logger.info("Consumer run loop exiting. Initiating cleanup...")
+            self.stop()  # Ensure stop is called on any exit path
 
     def stop(self):
         """Stops the consumer and closes Kafka clients."""
         if not self.running:
-            return  # Already stopped or stopping
+            logger.info(
+                "Stop called, but consumer was not running or already stopping."
+            )
+            return
 
         logger.info("Shutting down Reddit validation consumer...")
-        self.running = False  # Signal loops to stop
+        self.running = False  # Signal loops to stop FIRST
 
-        # Close consumers
+        # Close consumers - this will interrupt the blocking iteration in message_generator
         logger.info("Closing Kafka consumers...")
         for topic, consumer in self.consumers.items():
             try:
-                consumer.close()  # Assuming wrapper has close()
+                consumer.close()  # Calling close() on the wrapper
                 logger.info(f"Closed consumer for topic: {topic}")
             except Exception as e:
                 logger.error(
