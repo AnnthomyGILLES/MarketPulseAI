@@ -229,11 +229,21 @@ class RedditValidationConsumer:
                     target_producer_key = "validated_comments"
 
                 if target_producer_key and target_producer_key in self.producers:
-                    # Send the original validated data (as dict)
+                    # Map producer keys to their corresponding topic names
+                    topic_mapping = {
+                        "validated_posts": self.config["kafka"]["topics"]["social_media_reddit_validated"],
+                        "validated_comments": self.config["kafka"]["topics"]["social_media_reddit_comments_validated"],
+                        "validated_symbols": self.config["kafka"]["topics"]["social_media_reddit_symbols_validated"]
+                    }
+                    
+                    # Get the appropriate topic for this producer
+                    topic = topic_mapping.get(target_producer_key)
+                    
+                    # Send message with correct parameter order
                     success = self.producers[target_producer_key].send_message(
-                        validated_data_dict,
-                        key=f"validated_{item_id}",  # Use a consistent key format
-                        # topic= overridden if producer defaults to one topic
+                        topic=topic,  # Add required topic parameter
+                        value=validated_data_dict,
+                        key=f"validated_{item_id}"
                     )
                     if not success:
                         logger.error(
@@ -276,8 +286,11 @@ class RedditValidationConsumer:
                 }
                 # Send to invalid topic
                 if "invalid" in self.producers:
+                    invalid_topic = self.config["kafka"]["topics"]["social_media_reddit_invalid"]
                     self.producers["invalid"].send_message(
-                        invalid_data, key=f"invalid_{item_id}"
+                        topic=invalid_topic,
+                        value=invalid_data,
+                        key=f"invalid_{item_id}"
                     )
                 else:
                     logger.error(
@@ -313,11 +326,11 @@ class RedditValidationConsumer:
                 .isoformat()
                 .replace("+00:00", "Z"),
             }
-            success = self.producers[
-                "error"
-            ].send_message(
-                error_data,
-                key=f"error_{source_topic}_{time.time_ns()}",  # Unique key for error message
+            error_topic = self.config["kafka"]["topics"]["social_media_reddit_error"]
+            success = self.producers["error"].send_message(
+                topic=error_topic,
+                value=error_data,
+                key=f"error_{source_topic}_{time.time_ns()}"
             )
             if not success:
                 logger.error("CRITICAL: Failed to send message to error topic!")
