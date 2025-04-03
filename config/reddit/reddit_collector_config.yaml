@@ -1,0 +1,50 @@
+# Configuration for the Reddit Data Collector
+
+# List of subreddits to monitor
+subreddits:
+  - wallstreetbets
+  - investing
+  - stocks
+  - StockMarket
+  - FinancialIndependence
+  - CryptoCurrency # Added example
+
+# List of stock symbols to track specifically via search
+symbols:
+  - AAPL
+#  - GOOGL
+#  - MSFT
+#  - TSLA
+#  - AMZN
+#  - NVDA # Added example
+#  - BTC   # Example crypto symbol (note: symbol extraction logic might need adjustment)
+#  - ETH   # Example crypto symbol
+
+# How often to run the collection cycle (in seconds)
+collection_interval_seconds: 300 # 5 minutes
+
+# Limits for data collection per cycle
+limits:
+  # Max posts to fetch per subreddit per sort method/time filter combination
+  posts_per_subreddit: 1
+  # Max comments to fetch per post (if post meets criteria)
+  comments_per_post: 5
+  # Max posts to fetch per symbol during symbol search per time filter
+  posts_per_symbol: 2
+
+# Parameters controlling collection behavior
+collection_params:
+  # Default sort methods to use when collecting from subreddits
+  default_sort_methods:
+    - hot
+    - new
+    - top
+    - rising
+  # Default time filters to use with the 'top' sort method (for subreddits and symbol search)
+  default_time_filters:
+    - day
+    - week
+  # Collect comments for posts with score >= this value
+  comment_collection_min_score: 10
+  # Collect comments for posts with num_comments >= this value
+  comment_collection_min_comments: 5
