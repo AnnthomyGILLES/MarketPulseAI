@@ -1,122 +1,234 @@
-"""
-Base class for data collectors that send data to Kafka.
-"""
+# src/data_collection/base_collector.py
 
+import abc  # Used for defining abstract base classes
 import logging
+from pathlib import Path
 from typing import Dict, Any, Optional
 
-from src.common.messaging.kafka_producer import KafkaProducerWrapper
-from src.utils.config import load_config
+import yaml
+
+# Assuming these imports are correct based on the project structure
+from src.common.messaging.kafka_producer import KafkaProducerWrapper  #
+from src.utils.config import load_config  #
+from src.utils.logging import get_logger  # Use the central logging utility
 
 
-class BaseCollector:
+class BaseCollector(abc.ABC):
     """
-    Base collector class that provides common functionality for data collectors.
+    Abstract Base Class for data collectors that send data to Kafka.
 
-    This class handles configuration loading, logging setup, and Kafka integration
-    to be inherited by specific collector implementations.
+    Handles common functionalities:
+    - Loading Kafka configuration.
+    - Setting up a dedicated logger.
+    - Managing Kafka producer instances per topic.
+    - Providing a method to send messages to Kafka.
+    - Defining required methods (`collect`, `stop`) for subclasses.
+    - Cleaning up resources (Kafka producers).
     """
 
-    def __init__(self, config_path: str, collector_name: str):
+    # Define a default path relative to this file's location if needed
+    DEFAULT_KAFKA_CONFIG_PATH = (
+        Path(__file__).resolve().parents[2] / "config" / "kafka" / "kafka_config.yaml"
+    )
+
+    def __init__(
+        self,
+        collector_name: str,
+        kafka_config_path: Optional[str] = None,
+        log_level: int = logging.INFO,
+        use_json_logging: bool = False,
+    ):
         """
         Initialize the base collector.
 
         Args:
-            config_path: Path to the Kafka configuration file
-            collector_name: Name of the collector (used for logging and topics)
+            collector_name: Name of the collector (used for logging).
+            kafka_config_path: Optional path to the Kafka configuration file.
+                               Defaults to DEFAULT_KAFKA_CONFIG_PATH if None.
+            log_level: Logging level (e.g., logging.INFO, logging.DEBUG).
+            use_json_logging: Whether to use JSON format for logging.
         """
-        self.config = load_config(config_path)
         self.collector_name = collector_name
-        self.logger = self._setup_logger()
-        self.kafka_producers = {}  # Dictionary to store Kafka producers by topic
+        # Use the central get_logger utility
+        self.logger = get_logger(
+            f"collector.{self.collector_name}",
+            use_json=use_json_logging,
+            log_level=log_level,
+        )
 
-    def _setup_logger(self) -> logging.Logger:
-        """
-        Set up logging for the collector.
+        self.kafka_config_path = Path(
+            kafka_config_path or self.DEFAULT_KAFKA_CONFIG_PATH
+        )
+        self.kafka_config: Dict[str, Any] = self._load_kafka_config()
 
-        Returns:
-            Configured logger
-        """
-        logger = logging.getLogger(f"{self.collector_name}")
+        # Dictionary to store Kafka producers, keyed by topic name
+        self._kafka_producers: Dict[str, KafkaProducerWrapper] = {}
+        self.logger.info(f"BaseCollector '{self.collector_name}' initialized.")
 
-        # Configure logging if it hasn't been configured already
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    def _load_kafka_config(self) -> Dict[str, Any]:
+        """Loads Kafka configuration, ensuring necessary keys exist."""
+        self.logger.info(f"Loading Kafka configuration from: {self.kafka_config_path}")
+        try:
+            config = load_config(str(self.kafka_config_path))  #
+            # Validate essential config sections/keys
+            if not config:
+                raise ValueError("Kafka configuration file is empty.")
+            if "kafka" not in config:
+                raise ValueError("Kafka configuration missing 'kafka' section.")
+            if (
+                "bootstrap_servers_dev" not in config["kafka"]
+            ):  # Or use a configurable key like 'bootstrap_servers'
+                raise ValueError(
+                    "Kafka configuration missing 'kafka.bootstrap_servers_dev' key."
+                )
+            if "topics" not in config["kafka"]:
+                self.logger.warning(
+                    "Kafka configuration missing 'kafka.topics' section. Topic names must be provided directly."
+                )
+                # Allow continuation but topic names will need to be explicit
+
+            self.logger.info("Kafka configuration loaded successfully.")
+            return config["kafka"]  # Return only the 'kafka' subsection
+        except (FileNotFoundError, yaml.YAMLError, ValueError) as e:
+            self.logger.exception(
+                f"Failed to load or validate Kafka configuration from {self.kafka_config_path}: {e}"
             )
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-            logger.setLevel(logging.INFO)
-
-        return logger
+            raise  # Re-raise as config is critical
 
     def _get_producer(self, topic: str) -> KafkaProducerWrapper:
         """
-        Get or create a Kafka producer for a specific topic.
+        Retrieves or creates a Kafka producer for the specified topic.
+
+        Manages a dictionary of producers, ensuring only one instance per topic.
 
         Args:
-            topic: Kafka topic to produce to
+            topic: The Kafka topic name.
 
         Returns:
-            KafkaProducerWrapper instance
-        """
-        if topic not in self.kafka_producers:
-            bootstrap_servers = self.config["kafka"]["bootstrap_servers_dev"]
-            self.kafka_producers[topic] = KafkaProducerWrapper(
-                bootstrap_servers=bootstrap_servers, topic=topic
-            )
-            self.logger.info(f"Created Kafka producer for topic: {topic}")
+            An instance of KafkaProducerWrapper for the topic.
 
-        return self.kafka_producers[topic]
+        Raises:
+            ValueError: If bootstrap servers are not configured.
+            Exception: If producer creation fails.
+        """
+        if topic not in self._kafka_producers:
+            self.logger.info(f"Creating Kafka producer for topic: {topic}...")
+            try:
+                bootstrap_servers = self.kafka_config.get(
+                    "bootstrap_servers_dev"
+                )  # Or use a configurable key
+                if not bootstrap_servers:
+                    # This should have been caught in _load_kafka_config, but double-check
+                    raise ValueError(
+                        "Bootstrap servers are not defined in Kafka configuration."
+                    )
+
+                # Pass relevant producer settings from config if needed
+                producer_kwargs = self.kafka_config.get("producer_defaults", {})
+
+                self._kafka_producers[topic] = KafkaProducerWrapper(
+                    bootstrap_servers=bootstrap_servers,
+                    **producer_kwargs,  # Add other default producer settings
+                )
+                self.logger.info(
+                    f"Kafka producer for topic '{topic}' created successfully."
+                )
+            except Exception as e:
+                self.logger.exception(
+                    f"Failed to create Kafka producer for topic '{topic}': {e}"
+                )
+                raise  # Re-raise the exception
+
+        return self._kafka_producers[topic]
 
     def send_to_kafka(
         self, topic: str, message: Dict[str, Any], key: Optional[str] = None
     ) -> bool:
         """
-        Send a message to a Kafka topic.
+        Sends a message dictionary to the specified Kafka topic.
+
+        Uses the managed KafkaProducerWrapper instance for the topic.
 
         Args:
-            topic: Kafka topic to send to
-            message: Message to send
-            key: Optional message key
+            topic: The target Kafka topic name.
+            message: The message dictionary to send (must be serializable).
+            key: Optional Kafka message key (usually a string, will be encoded).
 
         Returns:
-            True if message was sent successfully, False otherwise
+            True if the message was accepted by the producer for sending, False otherwise.
+            Note: Actual delivery confirmation might require producer callbacks.
         """
         try:
             producer = self._get_producer(topic)
-            success = producer.send_message(message)
+            self.logger.debug(f"Sending message to Kafka topic '{topic}' (Key: {key})")
+            # KafkaProducerWrapper's send_message handles serialization and retries
+            # Pass the key if provided (producer wrapper should handle encoding if necessary)
+            # Note: Original KafkaProducerWrapper didn't explicitly handle keys, might need adjustment
+            # Assuming send_message in the wrapper is updated or ignores the key for now.
+            # A more robust implementation might require the wrapper to accept the key.
+            success = producer.send_message(
+                topic, message
+            )  # Key handling might need wrapper update
+            if not success:
+                self.logger.warning(
+                    f"Producer reported failure sending message to topic '{topic}' (Key: {key}). Check producer logs."
+                )
             return success
         except Exception as e:
-            self.logger.error(f"Error sending message to Kafka: {str(e)}")
+            # Catch errors during producer retrieval or sending attempt
+            self.logger.error(
+                f"Error sending message to Kafka topic '{topic}': {e}", exc_info=True
+            )
             return False
 
+    @abc.abstractmethod
     def collect(self) -> None:
         """
-        Start the data collection process.
+        Main data collection logic.
 
-        This method should be implemented by subclasses.
+        Subclasses MUST implement this method to perform their specific data gathering tasks.
         """
-        raise NotImplementedError("Subclasses must implement collect()")
+        raise NotImplementedError("Subclasses must implement the 'collect' method.")
 
+    @abc.abstractmethod
     def stop(self) -> None:
         """
-        Stop the data collection process.
+        Signal the collector to stop its operation gracefully.
 
-        This method should be implemented by subclasses.
+        Subclasses MUST implement this method to handle shutdown signals,
+        stop loops, and potentially wait for ongoing tasks to complete.
         """
-        raise NotImplementedError("Subclasses must implement stop()")
+        self.logger.info(f"Stop requested for collector '{self.collector_name}'.")
+        # Base implementation can log, subclasses add specific stop logic
 
     def cleanup(self) -> None:
         """
-        Clean up resources, including Kafka producers.
+        Cleans up resources, primarily closing Kafka producers.
+
+        Should be called after the collector has stopped.
         """
-        for topic, producer in self.kafka_producers.items():
+        self.logger.info(
+            f"Cleaning up resources for collector '{self.collector_name}'..."
+        )
+        closed_topics = []
+        for topic, producer in self._kafka_producers.items():
+            self.logger.info(f"Closing Kafka producer for topic: {topic}...")
             try:
-                producer.close()
-                self.logger.info(f"Closed Kafka producer for topic: {topic}")
+                # Ensure flush is called before close, similar to wrapper's __exit__
+                producer.producer.flush(timeout=10)  # Allow time to send buffer
+                producer.close()  # Call the wrapper's close method
+                closed_topics.append(topic)
+                self.logger.info(
+                    f"Successfully closed Kafka producer for topic: {topic}."
+                )
             except Exception as e:
                 self.logger.error(
-                    f"Error closing Kafka producer for topic {topic}: {str(e)}"
+                    f"Error closing Kafka producer for topic '{topic}': {e}",
+                    exc_info=True,
                 )
+
+        # Remove closed producers from the dictionary
+        for topic in closed_topics:
+            del self._kafka_producers[topic]
+
+        self.logger.info(f"Cleanup finished for collector '{self.collector_name}'.")
