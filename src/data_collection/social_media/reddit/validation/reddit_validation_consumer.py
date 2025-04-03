@@ -16,7 +16,6 @@ from src.common.messaging.kafka_consumer import KafkaConsumerWrapper
 from src.common.messaging.kafka_producer import KafkaProducerWrapper
 from src.data_collection.social_media.reddit.validation.reddit_validation import (
     validate_reddit_data,
-    RedditDataEnricher,
     RedditPost,  # Import models for type hinting
     RedditComment,
 )
@@ -236,7 +235,7 @@ class RedditValidationConsumer:
                         )
                         # Send original message_value to error topic on producer failure
                         self._send_to_error_topic(
-                            message_value, # Send original message on failure
+                            message_value,  # Send original message on failure
                             "producer_failure",
                             f"Failed to send validated data to {target_producer_key}",
                             source_topic,
@@ -248,7 +247,7 @@ class RedditValidationConsumer:
                     )
                     # Send original message_value to error topic if producer not found
                     self._send_to_error_topic(
-                        message_value, # Send original message on failure
+                        message_value,  # Send original message on failure
                         "producer_not_found",
                         f"No producer for key {target_producer_key}",
                         source_topic,
@@ -349,53 +348,67 @@ class RedditValidationConsumer:
 
         try:
             while self.running:
-                message_processed_in_cycle = False # Renamed for clarity
+                message_processed_in_cycle = False  # Renamed for clarity
                 # Poll each consumer round-robin
                 for topic, consumer in self.consumers.items():
                     if not self.running:
                         break  # Check flag before blocking poll
 
-                    logger.debug(f"Polling consumer for topic: {topic}") # Added log
+                    logger.debug(f"Polling consumer for topic: {topic}")  # Added log
                     # Use a short non-blocking timeout to poll messages
                     message_generator = consumer.consume()
-                    
-                    logger.debug(f"Got message generator for topic: {topic}") # Added log
-                    
+
+                    logger.debug(
+                        f"Got message generator for topic: {topic}"
+                    )  # Added log
+
                     # Process a batch of messages from this consumer
                     batch_count = 0
-                    max_batch_size = 10  # Process up to this many messages per consumer per loop
-                    
-                    try: # Added try/except around generator iteration
+                    max_batch_size = (
+                        10  # Process up to this many messages per consumer per loop
+                    )
+
+                    try:  # Added try/except around generator iteration
                         for msg in message_generator:
-                            logger.debug(f"Received from generator (topic: {topic}): {'Message' if msg else 'None/Timeout'}") # Added log
+                            logger.debug(
+                                f"Received from generator (topic: {topic}): {'Message' if msg else 'None/Timeout'}"
+                            )  # Added log
                             if not self.running:
                                 break
-                            
+
                             if msg is not None:  # Skip None messages (errors, etc.)
                                 self.process_message(msg)
-                                message_processed_in_cycle = True # Use the cycle flag
+                                message_processed_in_cycle = True  # Use the cycle flag
                                 batch_count += 1
-                                
+
                                 if batch_count >= max_batch_size:
-                                    logger.debug(f"Reached max batch size ({max_batch_size}) for topic: {topic}") # Added log
+                                    logger.debug(
+                                        f"Reached max batch size ({max_batch_size}) for topic: {topic}"
+                                    )  # Added log
                                     break  # Process other consumers after batch limit
                             # else: # Optional: log when None/timeout occurs from generator
-                                # logger.debug(f"Generator yielded None/timed out for topic: {topic}")
-                                
+                            # logger.debug(f"Generator yielded None/timed out for topic: {topic}")
+
                         # Check running flag after iterating the generator for this topic
                         if not self.running:
-                            logger.info(f"Running flag false after processing generator for topic: {topic}")
-                            break 
-                            
+                            logger.info(
+                                f"Running flag false after processing generator for topic: {topic}"
+                            )
+                            break
+
                     except Exception as e:
-                        logger.exception(f"Error iterating message generator for topic {topic}: {e}")
+                        logger.exception(
+                            f"Error iterating message generator for topic {topic}: {e}"
+                        )
                         # Decide if we should stop or continue polling other topics
-                        self.stop() # Example: stop on generator error
+                        self.stop()  # Example: stop on generator error
                         break
 
                 # If no messages were processed in a full loop across ALL consumers, sleep briefly
                 if not message_processed_in_cycle and self.running:
-                    logger.debug("No messages processed in this cycle, sleeping.") # Added log
+                    logger.debug(
+                        "No messages processed in this cycle, sleeping."
+                    )  # Added log
                     time.sleep(0.5)  # Prevent tight loop when idle
 
                 # Log stats periodically
