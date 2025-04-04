@@ -1,6 +1,3 @@
-# src/data_collection/social_media/reddit/validation/reddit_validation_consumer.py
-
-import logging
 import signal
 import time
 from datetime import datetime, timezone
@@ -9,22 +6,17 @@ from typing import Dict, Any, Optional
 
 from confluent_kafka import (
     KafkaException,
-)  # Using confluent_kafka types directly if wrappers use it
+)
+from loguru import logger
 
-# Assuming wrappers are compatible or adjusting imports as needed
 from src.common.messaging.kafka_consumer import KafkaConsumerWrapper
 from src.common.messaging.kafka_producer import KafkaProducerWrapper
 from src.data_collection.social_media.reddit.validation.reddit_validation import (
     validate_reddit_data,
-    RedditPost,  # Import models for type hinting
+    RedditPost,
     RedditComment,
 )
 from src.utils.config import load_config
-from src.utils.logging import setup_logger
-
-# Setup logger for this module
-setup_logger("my_log")
-logger = logging.getLogger(__name__)
 
 
 class RedditValidationConsumer:
@@ -42,6 +34,7 @@ class RedditValidationConsumer:
     def __init__(self, config_path: Optional[str] = None):
         """Initialize the consumer, loading configuration and setting up components."""
         self.config_path = Path(config_path or self.DEFAULT_CONFIG_PATH)
+        # Use loguru logger
         logger.info(f"Loading Kafka configuration from: {self.config_path}")
         try:
             self.config = load_config(
@@ -53,6 +46,7 @@ class RedditValidationConsumer:
                     "Kafka configuration missing 'kafka' or 'kafka.topics' section."
                 )
         except Exception as e:
+            # Use loguru logger with exception info
             logger.exception(
                 f"Failed to load Kafka configuration from {self.config_path}: {e}"
             )
@@ -102,12 +96,16 @@ class RedditValidationConsumer:
                 ]: self.config["kafka"]["consumer_groups"]["reddit_symbols_validation"],
             }
 
+            # Use loguru logger
             logger.info("Initializing Kafka consumers...")
             for topic, group_id in topic_group_map.items():
                 self.consumers[topic] = KafkaConsumerWrapper(
-                    topics=[topic],  # Pass the topic as a list to the 'topics' argument
+                    topics=[topic],
                     bootstrap_servers=bootstrap_servers,
                     group_id=group_id,
+                    # ADD THIS LINE: Set a timeout in milliseconds (e.g., 1 second)
+                    consumer_timeout_ms=1000,
+                    # Consider adding error_cb=self._kafka_error_callback if wrapper supports it
                 )
                 logger.info(
                     f"Initialized consumer for topic '{topic}' with group '{group_id}'"
@@ -130,22 +128,27 @@ class RedditValidationConsumer:
                 "error": self.config["kafka"]["topics"]["social_media_reddit_error"],
             }
 
+            # Use loguru logger
             logger.info("Initializing Kafka producers...")
             for key, topic_name in output_topics.items():
                 # Add error callback and configure delivery reports if needed
                 self.producers[key] = KafkaProducerWrapper(
                     bootstrap_servers=bootstrap_servers,
+                    # Consider adding error_cb=self._kafka_error_callback if wrapper supports it
                 )
+                # Use loguru logger
                 logger.info(
                     f"Initialized producer for topic key '{key}' ({topic_name})"
                 )
 
         except KeyError as e:
+            # Use loguru logger with exception info
             logger.exception(
                 f"Configuration key error during Kafka client setup: Missing key {e}"
             )
             raise ValueError(f"Missing required Kafka configuration key: {e}")
         except Exception as e:
+            # Use loguru logger with exception info
             logger.exception(f"Failed to initialize Kafka clients: {e}")
             raise
 
@@ -153,21 +156,35 @@ class RedditValidationConsumer:
         """Callback for Kafka client errors (consumers/producers)."""
         if err.code() == KafkaException._PARTITION_EOF:
             # Not really an error, normal event
+            # Use loguru logger
             logger.debug(f"Reached end of partition: {err}")
         elif err.fatal():
+            # Use loguru logger
             logger.error(f"FATAL Kafka Error: {err}. Stopping consumer.")
             # A fatal error often requires manual intervention or restart
             self.stop()  # Trigger shutdown on fatal errors
         else:
+            # Use loguru logger
             logger.warning(f"Non-fatal Kafka Error: {err}")
+
+        # Inside RedditValidationConsumer class in reddit_validation_consumer.py
+
 
     def process_message(self, raw_message: Dict[str, Any]) -> None:
         """Processes a single message consumed from Kafka."""
         self.processed_count += 1
         message_value = raw_message.get("value")
         source_topic = raw_message.get("topic", "unknown")
-        message_key = raw_message.get("key", None)  # Assuming key might be present
+        message_key = raw_message.get("key", None)
         item_id = "UNKNOWN_ID"  # Default
+
+        # ADDED LOG: Log the raw message details received
+        logger.info(
+            f"Received message from topic '{source_topic}'. Key: {message_key}, Offset: {raw_message.get('offset')}"
+        )
+        logger.debug(
+            f"Raw message value received: {message_value}"
+        )  # Log the content itself
 
         if not isinstance(message_value, dict):
             logger.error(
@@ -182,24 +199,35 @@ class RedditValidationConsumer:
             return
 
         item_id = message_value.get("id", item_id)
-        logger.debug(f"Processing message ID {item_id} from topic '{source_topic}'")
+        logger.info(
+            f"Processing message ID {item_id} from topic '{source_topic}'"
+        )  # Changed level to INFO
 
         try:
             # --- 1. Validation ---
+            # ADDED LOG: Log before validation
+            logger.debug(f"Attempting validation for item ID {item_id}...")
             validated_model, validation_errors = self.validator(message_value)
+
+            # ADDED LOG: Log validation outcome
+            if validated_model:
+                logger.info(
+                    f"Validation SUCCEEDED for {validated_model.content_type} {item_id}"
+                )  # Changed level to INFO
+            else:
+                logger.warning(
+                    f"Validation FAILED for item ID {item_id}. Errors: {validation_errors}"
+                )
 
             if validated_model:
                 self.valid_count += 1
-                logger.debug(
-                    f"Validation successful for {validated_model.content_type} {item_id}"
-                )
+                # logger.debug(...) # Original debug log is fine here
 
-                # Convert validated model back to dict for sending
                 validated_data_dict = validated_model.model_dump()
 
-                # --- 3. Produce Validated Data to Appropriate Topic ---
+                # --- 3. Produce Validated Data ---
                 target_producer_key = None
-                # First check the source topic to determine the appropriate destination
+                # Logic to determine target_producer_key...
                 if (
                     source_topic
                     == self.config["kafka"]["topics"]["social_media_reddit_raw"]
@@ -222,8 +250,12 @@ class RedditValidationConsumer:
                 elif isinstance(validated_model, RedditComment):
                     target_producer_key = "validated_comments"
 
+                # ADDED LOG: Log determined target producer and topic
+                logger.debug(
+                    f"Determined target producer key: '{target_producer_key}' for item ID {item_id}"
+                )
+
                 if target_producer_key and target_producer_key in self.producers:
-                    # Map producer keys to their corresponding topic names
                     topic_mapping = {
                         "validated_posts": self.config["kafka"]["topics"][
                             "social_media_reddit_validated"
@@ -235,19 +267,28 @@ class RedditValidationConsumer:
                             "social_media_reddit_symbols_validated"
                         ],
                     }
-
-                    # Get the appropriate topic for this producer
                     topic = topic_mapping.get(target_producer_key)
 
-                    # Send message with correct parameter order
+                    # ADDED LOG: Log before sending
+                    logger.info(
+                        f"Attempting to send validated item ID {item_id} to topic '{topic}' via producer '{target_producer_key}'"
+                    )  # Changed level to INFO
+                    logger.debug(f"Data being sent: {validated_data_dict}")
+
                     success = self.producers[target_producer_key].send_message(
-                        topic=topic,  # Add required topic parameter
+                        topic=topic,
                         value=validated_data_dict,
                         key=f"validated_{item_id}",
                     )
-                    if not success:
+
+                    # ADDED LOG: Log send result
+                    if success:
+                        logger.info(
+                            f"Successfully queued message for item ID {item_id} to producer '{target_producer_key}' (Topic: '{topic}')"
+                        )
+                    else:
                         logger.error(
-                            f"Failed to produce validated message ID {item_id} to {target_producer_key}"
+                            f"Failed to queue message for item ID {item_id} to producer '{target_producer_key}' (Topic: '{topic}') via send_message"
                         )
                         # Send original message_value to error topic on producer failure
                         self._send_to_error_topic(
@@ -258,8 +299,9 @@ class RedditValidationConsumer:
                         )
                         self.error_count += 1
                 else:
+                    # ADDED LOG: Log producer not found condition more clearly
                     logger.error(
-                        f"No valid producer found for validated item ID {item_id}. Target key: {target_producer_key}"
+                        f"No valid producer found or configured for key '{target_producer_key}' for validated item ID {item_id}."
                     )
                     # Send original message_value to error topic if producer not found
                     self._send_to_error_topic(
@@ -273,9 +315,7 @@ class RedditValidationConsumer:
             else:
                 # --- Handle Validation Failure ---
                 self.invalid_count += 1
-                logger.warning(
-                    f"Validation failed for item ID {item_id} from topic '{source_topic}'. Errors: {validation_errors}"
-                )
+                # logger.warning(...) # Existing warning is good
                 invalid_data = {
                     "original_message": message_value,
                     "validation_errors": validation_errors,
@@ -302,12 +342,11 @@ class RedditValidationConsumer:
         except Exception as e:
             # --- Handle Unexpected Processing Error ---
             self.error_count += 1
+            # ADDED LOG: Make sure unexpected errors are clearly logged
             logger.exception(
-                f"Unexpected error processing message ID {item_id} from topic '{source_topic}': {e}"
+                f"CRITICAL UNEXPECTED error during processing message ID {item_id} from topic '{source_topic}': {e}"
             )
-            self._send_to_error_topic(
-                message_value, type(e).__name__, str(e), source_topic
-            )
+            self._send_to_error_topic(message_value, type(e).__name__, str(e), source_topic)
 
     def _send_to_error_topic(
         self,
@@ -335,8 +374,10 @@ class RedditValidationConsumer:
                 key=f"error_{source_topic}_{time.time_ns()}",
             )
             if not success:
+                # Use loguru logger
                 logger.error("CRITICAL: Failed to send message to error topic!")
         else:
+            # Use loguru logger
             logger.error(
                 "Producer for 'error' topic not found. Cannot send error message."
             )
@@ -344,10 +385,12 @@ class RedditValidationConsumer:
     def run(self):
         """Starts the main consumer loop."""
         if self.running:
+            # Use loguru logger
             logger.warning("Consumer is already running.")
             return
 
         self.running = True
+        # Use loguru logger
         logger.info("Starting Reddit validation consumer...")
 
         # Subscription happens during KafkaConsumerWrapper initialization
@@ -360,13 +403,16 @@ class RedditValidationConsumer:
                     if not self.running:
                         break  # Check flag before potentially blocking call
 
+                    # Use loguru logger
                     logger.debug(f"Polling consumer for topic: {topic}")
                     message_generator = consumer.consume()
 
+                    # Use loguru logger
                     logger.debug(f"Got message generator for topic: {topic}")
 
                     try:
                         for msg in message_generator:
+                            # Use loguru logger
                             logger.debug(
                                 f"Received from generator (topic: {topic}): {'Message' if msg else 'None/Timeout'}"
                             )
@@ -379,6 +425,7 @@ class RedditValidationConsumer:
 
                         # Check running flag after iterating the generator for this topic
                         if not self.running:
+                            # Use loguru logger
                             logger.info(
                                 f"Running flag false after processing generator for topic: {topic}"
                             )
@@ -386,6 +433,7 @@ class RedditValidationConsumer:
 
                     except StopIteration:
                         # This might occur if the consumer is closed externally or if consumer_timeout_ms is set and reached
+                        # Use loguru logger
                         logger.info(
                             f"Message generator for topic {topic} stopped (StopIteration)."
                         )
@@ -393,6 +441,7 @@ class RedditValidationConsumer:
                             break
                         # Otherwise, continue to the next consumer or next cycle
                     except Exception as e:
+                        # Use loguru logger with exception info
                         logger.exception(
                             f"Error iterating message generator for topic {topic}: {e}"
                         )
@@ -402,58 +451,67 @@ class RedditValidationConsumer:
 
                 # If no messages were processed in a full loop across ALL consumers, sleep briefly
                 if not message_processed_in_cycle and self.running:
+                    # Use loguru logger
                     logger.debug("No messages processed in this cycle, sleeping.")
                     time.sleep(0.5)  # Prevent tight loop when idle
 
         except KeyboardInterrupt:
+            # Use loguru logger
             logger.info("Keyboard interrupt detected. Initiating shutdown.")
             # self.stop() will be called in the finally block
         except Exception as e:
+            # Use loguru logger with exception info
             logger.exception(f"Critical error in consumer run loop: {e}")
             # self.stop() will be called in the finally block
         finally:
+            # Use loguru logger
             logger.info("Consumer run loop exiting. Initiating cleanup...")
             self.stop()  # Ensure stop is called on any exit path
 
     def stop(self):
         """Stops the consumer and closes Kafka clients."""
         if not self.running:
+            # Use loguru logger
             logger.info(
                 "Stop called, but consumer was not running or already stopping."
             )
             return
 
+        # Use loguru logger
         logger.info("Shutting down Reddit validation consumer...")
         self.running = False  # Signal loops to stop FIRST
 
         # Close consumers - this will interrupt the blocking iteration in message_generator
+        # Use loguru logger
         logger.info("Closing Kafka consumers...")
         for topic, consumer in self.consumers.items():
             try:
                 consumer.close()  # Calling close() on the wrapper
+                # Use loguru logger
                 logger.info(f"Closed consumer for topic: {topic}")
             except Exception as e:
-                logger.error(
-                    f"Error closing consumer for topic {topic}: {e}", exc_info=True
-                )
+                # Use loguru logger with exception info (added exc_info=True implicitly)
+                logger.exception(f"Error closing consumer for topic {topic}: {e}")
 
         # Close producers
+        # Use loguru logger
         logger.info("Closing Kafka producers...")
         for key, producer in self.producers.items():
             try:
                 # Flush any buffered messages before closing
                 producer.flush(timeout=10)  # Allow time for messages to send
                 producer.close()  # Assuming wrapper has close()
+                # Use loguru logger
                 logger.info(f"Closed producer for key: {key}")
             except Exception as e:
-                logger.error(
-                    f"Error closing producer for key {key}: {e}", exc_info=True
-                )
-
+                # Use loguru logger with exception info (added exc_info=True implicitly)
+                logger.exception(f"Error closing producer for key {key}: {e}")
+        # Use loguru logger
         logger.info("Reddit validation consumer shut down complete.")
 
     def _handle_signal(self, signum, frame):
         """Handles termination signals for graceful shutdown."""
+        # Use loguru logger
         logger.warning(f"Received signal {signum}. Initiating graceful shutdown...")
         self.stop()
 
@@ -461,15 +519,19 @@ class RedditValidationConsumer:
 # Example Usage
 if __name__ == "__main__":
     # Configure logging for standalone run
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    # Option 1: Basic loguru setup if needed here
+    # logger.add(sys.stderr, format="{time} {level} {message}", filter="my_module", level="INFO")
+    # Option 2: Assume loguru is configured externally or by default
+    # logging.basicConfig( # Removed standard logging config
+    #     level=logging.INFO,
+    #     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    # )
 
     consumer_service = None
     try:
         consumer_service = RedditValidationConsumer()
         consumer_service.run()
     except Exception:
+        # Use loguru logger with exception info
         logger.exception("Failed to initialize or run the consumer service.")
     # Shutdown is handled by signal handlers or exceptions within run()
