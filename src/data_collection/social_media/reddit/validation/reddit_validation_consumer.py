@@ -34,17 +34,14 @@ class RedditValidationConsumer:
     def __init__(self, config_path: Optional[str] = None):
         """Initialize the consumer, loading configuration and setting up components."""
         self.config_path = Path(config_path or self.DEFAULT_CONFIG_PATH)
-        # Use loguru logger
         logger.info(f"Loading Kafka configuration from: {self.config_path}")
         try:
             self.config = load_config(self.config_path)
-            # Basic check for essential keys
             if "kafka" not in self.config or "topics" not in self.config["kafka"]:
                 raise ValueError(
                     "Kafka configuration missing 'kafka' or 'kafka.topics' section."
                 )
         except Exception as e:
-            # Use loguru logger with exception info
             logger.exception(
                 f"Failed to load Kafka configuration from {self.config_path}: {e}"
             )
@@ -92,7 +89,6 @@ class RedditValidationConsumer:
                 ]: self.config["kafka"]["consumer_groups"]["reddit_symbols_validation"],
             }
 
-            # Use loguru logger
             logger.info("Initializing Kafka consumers...")
             for topic, group_id in topic_group_map.items():
                 self.consumers[topic] = KafkaConsumerWrapper(
@@ -105,7 +101,6 @@ class RedditValidationConsumer:
                     f"Initialized consumer for topic '{topic}' with group '{group_id}'"
                 )
 
-            # Define output topics
             output_topics = {
                 "validated_posts": self.config["kafka"]["topics"][
                     "social_media_reddit_validated"
