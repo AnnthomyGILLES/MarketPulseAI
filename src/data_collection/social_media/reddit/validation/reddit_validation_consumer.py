@@ -59,7 +59,6 @@ class RedditValidationConsumer:
             raise
 
         self.validator = validate_reddit_data  # Use the validation function directly
-        # self.enricher = RedditDataEnricher() # Removed enricher instantiation
         self.running = False
 
         self._setup_kafka_clients()
@@ -109,16 +108,10 @@ class RedditValidationConsumer:
                     topics=[topic],  # Pass the topic as a list to the 'topics' argument
                     bootstrap_servers=bootstrap_servers,
                     group_id=group_id,
-                    # Pass other consumer-specific configs from self.config['kafka']['consumer_config'] if needed
-                    # e.g., fetch_max_wait_ms=self.config['kafka']['consumer_config'].get('fetch_max_wait_ms', 500)
                 )
                 logger.info(
                     f"Initialized consumer for topic '{topic}' with group '{group_id}'"
                 )
-                # Removed check for consumer._running as it's no longer part of the simplified wrapper
-                # # Verify the consumer is running properly
-                # if not self.consumers[topic]._running:
-                #     logger.warning(f"Consumer for topic '{topic}' is not in running state after initialization!")
 
             # Define output topics
             output_topics = {
@@ -168,16 +161,6 @@ class RedditValidationConsumer:
         else:
             logger.warning(f"Non-fatal Kafka Error: {err}")
 
-    # Optional: Delivery report callback for producers
-    # def _delivery_report(self, err, msg):
-    #     """ Called once for each message produced to indicate delivery result. """
-    #     if err is not None:
-    #         logger.error(f'Message delivery failed: {err}')
-    #         self.error_count += 1
-    #         # Optionally send to error topic again or implement retry/dead-letter
-    #     else:
-    #         logger.debug(f'Message delivered to {msg.topic()} [{msg.partition()}] @ offset {msg.offset()}')
-
     def process_message(self, raw_message: Dict[str, Any]) -> None:
         """Processes a single message consumed from Kafka."""
         self.processed_count += 1
@@ -211,18 +194,29 @@ class RedditValidationConsumer:
                     f"Validation successful for {validated_model.content_type} {item_id}"
                 )
 
-                # --- 2. Enrichment Removed ---
-                # enriched_data = self.enricher.enrich_data(validated_model) # Enrichment step removed
-
                 # Convert validated model back to dict for sending
                 validated_data_dict = validated_model.model_dump()
 
                 # --- 3. Produce Validated Data to Appropriate Topic ---
                 target_producer_key = None
-                # Check if it originated from a symbol-focused topic or has symbols detected
-                # Assuming symbol topics contain 'symbols' in their name
-                if "symbols" in source_topic or validated_model.detected_symbols:
+                # First check the source topic to determine the appropriate destination
+                if (
+                    source_topic
+                    == self.config["kafka"]["topics"]["social_media_reddit_raw"]
+                ):
+                    target_producer_key = "validated_posts"
+                elif (
+                    source_topic
+                    == self.config["kafka"]["topics"]["social_media_reddit_comments"]
+                ):
+                    target_producer_key = "validated_comments"
+                elif (
+                    source_topic
+                    == self.config["kafka"]["topics"]["social_media_reddit_symbols"]
+                    or validated_model.detected_symbols
+                ):
                     target_producer_key = "validated_symbols"
+                # Fallback to content type if source topic doesn't match expected patterns
                 elif isinstance(validated_model, RedditPost):
                     target_producer_key = "validated_posts"
                 elif isinstance(validated_model, RedditComment):
@@ -231,19 +225,25 @@ class RedditValidationConsumer:
                 if target_producer_key and target_producer_key in self.producers:
                     # Map producer keys to their corresponding topic names
                     topic_mapping = {
-                        "validated_posts": self.config["kafka"]["topics"]["social_media_reddit_validated"],
-                        "validated_comments": self.config["kafka"]["topics"]["social_media_reddit_comments_validated"],
-                        "validated_symbols": self.config["kafka"]["topics"]["social_media_reddit_symbols_validated"]
+                        "validated_posts": self.config["kafka"]["topics"][
+                            "social_media_reddit_validated"
+                        ],
+                        "validated_comments": self.config["kafka"]["topics"][
+                            "social_media_reddit_comments_validated"
+                        ],
+                        "validated_symbols": self.config["kafka"]["topics"][
+                            "social_media_reddit_symbols_validated"
+                        ],
                     }
-                    
+
                     # Get the appropriate topic for this producer
                     topic = topic_mapping.get(target_producer_key)
-                    
+
                     # Send message with correct parameter order
                     success = self.producers[target_producer_key].send_message(
                         topic=topic,  # Add required topic parameter
                         value=validated_data_dict,
-                        key=f"validated_{item_id}"
+                        key=f"validated_{item_id}",
                     )
                     if not success:
                         logger.error(
@@ -286,11 +286,13 @@ class RedditValidationConsumer:
                 }
                 # Send to invalid topic
                 if "invalid" in self.producers:
-                    invalid_topic = self.config["kafka"]["topics"]["social_media_reddit_invalid"]
+                    invalid_topic = self.config["kafka"]["topics"][
+                        "social_media_reddit_invalid"
+                    ]
                     self.producers["invalid"].send_message(
                         topic=invalid_topic,
                         value=invalid_data,
-                        key=f"invalid_{item_id}"
+                        key=f"invalid_{item_id}",
                     )
                 else:
                     logger.error(
@@ -330,7 +332,7 @@ class RedditValidationConsumer:
             success = self.producers["error"].send_message(
                 topic=error_topic,
                 value=error_data,
-                key=f"error_{source_topic}_{time.time_ns()}"
+                key=f"error_{source_topic}_{time.time_ns()}",
             )
             if not success:
                 logger.error("CRITICAL: Failed to send message to error topic!")
@@ -338,18 +340,6 @@ class RedditValidationConsumer:
             logger.error(
                 "Producer for 'error' topic not found. Cannot send error message."
             )
-
-    def _log_stats(self):
-        """Logs processing statistics periodically."""
-        current_time = time.time()
-        if current_time - self.last_stats_time >= self.stats_interval:
-            logger.info(
-                f"Stats ({self.stats_interval}s): Processed={self.processed_count}, "
-                f"Valid={self.valid_count}, Invalid={self.invalid_count}, Errors={self.error_count}"
-            )
-            # Reset counters for the next interval if desired
-            # self.processed_count = self.valid_count = self.invalid_count = self.error_count = 0
-            self.last_stats_time = current_time
 
     def run(self):
         """Starts the main consumer loop."""
@@ -371,45 +361,21 @@ class RedditValidationConsumer:
                         break  # Check flag before potentially blocking call
 
                     logger.debug(f"Polling consumer for topic: {topic}")
-                    # Removed log checking consumer._running state
-                    # logger.debug(f"Consumer _running state: {consumer._running}")
-
-                    # Get the message generator. consumer.consume() now directly yields from _message_generator
-                    # which iterates over the underlying kafka-python consumer.
-                    # This iterator blocks based on fetch_max_wait_ms or until a message arrives or it's closed.
                     message_generator = consumer.consume()
 
                     logger.debug(f"Got message generator for topic: {topic}")
 
-                    # Process a batch of messages from this consumer
-                    batch_count = 0
-                    max_batch_size = (
-                        10  # Process up to this many messages per consumer per loop
-                    )
-
                     try:
-                        for msg in (
-                            message_generator
-                        ):  # This loop will block or yield messages
+                        for msg in message_generator:
                             logger.debug(
                                 f"Received from generator (topic: {topic}): {'Message' if msg else 'None/Timeout'}"
                             )
-                            if not self.running:  # Check flag again in case stop() was called during iteration
+                            if not self.running:
                                 break
 
                             if msg is not None:  # Process valid messages
                                 self.process_message(msg)
                                 message_processed_in_cycle = True
-                                batch_count += 1
-
-                                if batch_count >= max_batch_size:
-                                    logger.debug(
-                                        f"Reached max batch size ({max_batch_size}) for topic: {topic}"
-                                    )
-                                    break  # Move to the next consumer
-                            # else: # A None yield could indicate an error handled within the wrapper or timeout
-                            #     logger.debug(f"Generator yielded None for topic: {topic}, possibly due to timeout or deserialization error.")
-                            #     # We might not need to break here, let the loop continue polling
 
                         # Check running flag after iterating the generator for this topic
                         if not self.running:
@@ -438,9 +404,6 @@ class RedditValidationConsumer:
                 if not message_processed_in_cycle and self.running:
                     logger.debug("No messages processed in this cycle, sleeping.")
                     time.sleep(0.5)  # Prevent tight loop when idle
-
-                # Log stats periodically
-                self._log_stats()
 
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt detected. Initiating shutdown.")
