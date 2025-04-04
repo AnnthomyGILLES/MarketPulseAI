@@ -4,33 +4,38 @@ kafka:
   bootstrap_servers_prod: ["kafka-1:9092", "kafka-2:9092", "kafka-3:9092"]
 
   topics:
-    # Existing market data topics
+    # Reddit Collector Output Topics
+    social_media_reddit_raw: "social-media-reddit-raw"             # Raw Reddit posts
+    social_media_reddit_comments: "social-media-reddit-comments"   # Comments from posts
+    social_media_reddit_symbols: "social-media-reddit-symbols"     # Posts with stock symbols
+    
+    # Reddit Validation Consumer Output Topics
+    social_media_reddit_validated: "social-media-reddit-validated"                   # Validated posts
+    social_media_reddit_comments_validated: "social-media-reddit-comments-validated" # Validated comments
+    social_media_reddit_symbols_validated: "social-media-reddit-symbols-validated"   # Validated symbol posts
+    social_media_reddit_invalid: "social-media-reddit-invalid"                       # Invalid Reddit data
+    social_media_reddit_error: "social-media-reddit-error"                           # Processing errors
+    
+    # Additional Reddit topics
+    social_media_reddit_rising_historical: "social-media-reddit-rising-historical"
+    
+    # Market data topics
     market_data_raw: "market-data-raw"
     market_data_validated: "market-data-validated"
     market_data_error: "market-data-error"
-
-    # Reddit social media topics
-    social_media_reddit_raw: "social-media-reddit-raw"
-    social_media_reddit_validated: "social-media-reddit-validated"
-    social_media_reddit_error: "social-media-reddit-error"
-    social_media_reddit_invalid: "social-media-reddit-invalid"
-
-    # Additional Reddit topics referenced in the collector code
-    social_media_reddit_comments: "social-media-reddit-comments"
-    social_media_reddit_comments_validated: "social-media-reddit-comments-validated"
-    social_media_reddit_symbols: "social-media-reddit-symbols"
-    social_media_reddit_symbols_validated: "social-media-reddit-symbols-validated"
-    social_media_reddit_rising_historical: "social-media-reddit-rising-historical"
-
-    # Combined sentiment topic (for processed sentiment data)
+    
+    # Combined sentiment topic
     sentiment_aggregated: "sentiment-aggregated"
 
   # Kafka consumer group IDs
   consumer_groups:
+    # Reddit validation groups
+    reddit_validation: "reddit-validation-group"                     # For raw posts
+    reddit_comments_validation: "reddit-comments-validation-group"   # For comments
+    reddit_symbols_validation: "reddit-symbols-validation-group"     # For symbol posts
+    
+    # Market data validation group
     market_data_validation: "market-data-validation-group"
-    reddit_validation: "reddit-validation-group"
-    reddit_comments_validation: "reddit-comments-validation-group"
-    reddit_symbols_validation: "reddit-symbols-validation-group"
 
   # Kafka configuration parameters
   config:
