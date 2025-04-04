@@ -1,18 +1,10 @@
-# src/data_collection/social_media/reddit/validation/reddit_validation.py
-
-import logging
 import re
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any, Union, Tuple
 
+from loguru import logger
 from pydantic import BaseModel, Field, field_validator, model_validator, ValidationError
 
-# Setup logger for this module
-# Assuming a central logging setup exists and is configured elsewhere
-logger = logging.getLogger(__name__)
-
-# Basic regex for common stock symbols (1-5 uppercase letters)
-# Allows optional '$' prefix
 SYMBOL_REGEX = re.compile(r"^\$?[A-Z]{1,5}$")
 
 
@@ -44,6 +36,7 @@ def validate_symbol_list(symbols: Optional[List[str]]) -> Optional[List[str]]:
         if isinstance(symbol, str) and SYMBOL_REGEX.match(symbol):
             validated_symbols.append(symbol.lstrip("$"))  # Store without '$' prefix
         else:
+            # Use loguru logger
             logger.warning(f"Invalid or non-standard symbol format found: '{symbol}'")
             # Decide whether to discard or keep - currently discarding invalid ones
             # If keeping, add: validated_symbols.append(symbol)
@@ -105,6 +98,7 @@ class RedditBase(BaseModel):
                 dt_utc = datetime.fromtimestamp(created_utc_float, timezone.utc)
                 values["created_datetime"] = dt_utc.isoformat().replace("+00:00", "Z")
             except (ValueError, TypeError) as e:
+                # Use loguru logger
                 logger.warning(
                     f"Could not convert created_utc '{created_utc_float}' to datetime: {e}"
                 )
@@ -119,6 +113,7 @@ class RedditBase(BaseModel):
                 try:
                     values["created_datetime"] = validate_iso_utc_datetime(dt_str)
                 except ValueError:
+                    # Use loguru logger
                     logger.warning(
                         f"Could not validate existing datetime string: {dt_str}"
                     )
@@ -160,11 +155,13 @@ class RedditBase(BaseModel):
             if collected_dt < created_dt - timedelta(
                 minutes=1
             ):  # Allow small tolerance
+                # Use loguru logger
                 logger.warning(
                     f"Collection timestamp {self.collection_timestamp} is before creation timestamp {self.created_datetime} for item {self.id}"
                 )
                 # Raise ValueError here if this should be a hard failure
         except (ValueError, TypeError) as e:
+            # Use loguru logger
             logger.warning(f"Could not compare timestamps for item {self.id}: {e}")
         return self
 
@@ -202,10 +199,13 @@ class RedditPost(RedditBase):
     def check_post_quality(self):
         """Perform basic quality checks specific to posts."""
         if self.author == "[deleted]" and (not self.title or self.title == "[deleted]"):
+            # Use loguru logger
             logger.warning(f"Post {self.id} appears to be deleted (author and title).")
         elif len(self.title) < 5:
+            # Use loguru logger
             logger.debug(f"Post {self.id} has a very short title: '{self.title}'")
         if self.is_self and not self.selftext and len(self.title) < 20:
+            # Use loguru logger
             logger.debug(f"Post {self.id} is a self-post with no body and short title.")
         return self
 
@@ -245,8 +245,10 @@ class RedditComment(RedditBase):
     def check_comment_quality(self):
         """Perform basic quality checks specific to comments."""
         if self.author == "[deleted]" and self.body == "[deleted]":
+            # Use loguru logger
             logger.warning(f"Comment {self.id} appears to be fully deleted.")
         elif len(self.body) < 3:
+            # Use loguru logger
             logger.debug(f"Comment {self.id} has a very short body.")
         return self
 
@@ -277,14 +279,17 @@ def validate_reddit_data(
     try:
         if content_type == "post":
             validated_model = RedditPost(**data)
+            # Use loguru logger
             logger.debug(f"Successfully validated post: {item_id}")
         elif content_type == "comment":
             validated_model = RedditComment(**data)
+            # Use loguru logger
             logger.debug(f"Successfully validated comment: {item_id}")
         else:
             validation_errors.append(
                 f"Missing or invalid 'content_type': {content_type}"
             )
+            # Use loguru logger
             logger.warning(
                 f"Validation failed for item {item_id}: Invalid content_type '{content_type}'"
             )
@@ -295,6 +300,7 @@ def validate_reddit_data(
             field = ".".join(map(str, error["loc"])) if error["loc"] else "general"
             msg = f"Field '{field}': {error['msg']}"
             validation_errors.append(msg)
+        # Use loguru logger
         logger.warning(
             f"Validation failed for {content_type or 'item'} {item_id}: {len(validation_errors)} error(s). First error: {validation_errors[0]}"
         )
@@ -304,9 +310,9 @@ def validate_reddit_data(
         # Catch unexpected errors during validation
         error_msg = f"Unexpected validation error: {str(e)}"
         validation_errors.append(error_msg)
-        logger.error(
-            f"Unexpected error validating {content_type or 'item'} {item_id}: {e}",
-            exc_info=True,
-        )  # Include stack trace
+        # Use loguru logger with exception info
+        logger.exception(
+            f"Unexpected error validating {content_type or 'item'} {item_id}: {e}"
+        )
 
     return validated_model, validation_errors
