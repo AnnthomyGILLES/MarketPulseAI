@@ -26,11 +26,11 @@ collection_interval_seconds: 300 # 5 minutes
 # Limits for data collection per cycle
 limits:
   # Max posts to fetch per subreddit per sort method/time filter combination
-  posts_per_subreddit: 1
+  posts_per_subreddit: 3
   # Max comments to fetch per post (if post meets criteria)
   comments_per_post: 5
   # Max posts to fetch per symbol during symbol search per time filter
-  posts_per_symbol: 2
+  posts_per_symbol: 3
 
 # Parameters controlling collection behavior
 collection_params:
