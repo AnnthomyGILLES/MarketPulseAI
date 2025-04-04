@@ -1,5 +1,3 @@
-# src/common/messaging/kafka_producer.py
-
 import json
 import time
 from pathlib import Path
@@ -8,13 +6,10 @@ from typing import Any, Dict, Union, Optional, List
 # Use kafka-python as in the original file
 from kafka import KafkaProducer
 from kafka.errors import KafkaError, KafkaTimeoutError
+from loguru import logger
 
 # Assuming these utilities exist and work as expected
-from src.common.messaging.serializers import serialize_message  #
-from src.utils.logging import get_logger  # Use the central logging utility
-
-# Get logger for this module
-logger = get_logger(__name__)
+from src.common.messaging.serializers import serialize_message
 
 
 class KafkaProducerWrapper:
@@ -117,12 +112,9 @@ class KafkaProducerWrapper:
                     )
                     return False
             except KafkaError as e:
-                # Handle other potential Kafka errors during send
                 logger.error(
-                    f"Attempt {attempt + 1} failed: KafkaError sending message to topic '{topic}'. Error: {e}",
-                    exc_info=True,
+                    f"Attempt {attempt + 1} failed: KafkaError sending message to topic '{topic}'. Error: {e}"
                 )
-                # Depending on the error, retry might not help, but we follow the retry logic
                 if attempt < send_retries:
                     logger.info(f"Retrying in {retry_delay_secs} seconds...")
                     time.sleep(retry_delay_secs)
@@ -132,13 +124,11 @@ class KafkaProducerWrapper:
                     )
                     return False
             except Exception as e:
-                # Catch unexpected errors
                 logger.exception(
                     f"Unexpected error sending message to topic '{topic}' on attempt {attempt + 1}: {e}"
                 )
-                # Stop retrying on unexpected errors
                 return False
-        return False  # Should not be reached if loop completes normally
+        return False
 
     def send_json_stream(
         self, file_path: Union[str, Path], topic: str, send_retries: int = 2
@@ -160,7 +150,7 @@ class KafkaProducerWrapper:
             with open(file_path, "r", encoding="utf-8") as file:
                 for line in file:
                     line_num += 1
-                    if not line.strip():  # Skip empty lines
+                    if not line.strip():
                         continue
                     try:
                         obj = json.loads(line)
@@ -169,7 +159,6 @@ class KafkaProducerWrapper:
                                 f"Skipping non-dictionary object in {file_path}:{line_num}"
                             )
                             continue
-                        # Use the standard send_message method with retries
                         success = self.send_message(
                             topic=topic, value=obj, send_retries=send_retries
                         )
@@ -179,7 +168,6 @@ class KafkaProducerWrapper:
                             logger.error(
                                 f"Failed to send object from {file_path}:{line_num}. See previous errors."
                             )
-                            # Decide whether to stop or continue on failure
                     except json.JSONDecodeError as e:
                         logger.error(
                             f"JSON decoding error in {file_path}:{line_num}: {e}"
@@ -211,7 +199,9 @@ class KafkaProducerWrapper:
             self.producer.flush(timeout=timeout)
             logger.info("Producer flushed.")
         except KafkaError as e:
-            logger.error(f"Error during producer flush: {e}", exc_info=True)
+            logger.error(f"Error during producer flush: {e}")
+        except Exception as e:
+            logger.exception(f"Unexpected error during producer flush: {e}")
 
     def close(self, timeout: Optional[float] = 10.0):
         """
@@ -226,7 +216,7 @@ class KafkaProducerWrapper:
             self.producer.close()
             logger.info("Kafka producer closed successfully.")
         except KafkaError as e:
-            logger.error(f"Error closing Kafka producer: {e}", exc_info=True)
+            logger.error(f"Error closing Kafka producer: {e}")
         except Exception as e:
             logger.exception(f"Unexpected error during producer close: {e}")
 
