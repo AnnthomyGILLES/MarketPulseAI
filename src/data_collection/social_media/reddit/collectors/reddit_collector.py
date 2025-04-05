@@ -1,7 +1,7 @@
 # src/data_collection/social_media/reddit/collectors/reddit_collector.py
 
-import logging
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -9,15 +9,12 @@ from typing import List, Optional, Set
 
 import praw
 import prawcore
-import yaml  # Added for config loading
+import yaml
 from dotenv import load_dotenv
+from loguru import logger  # Keep for standalone execution configuration
 
+from src.common.messaging.kafka_producer import KafkaProducerWrapper
 from src.data_collection.base_collector import BaseCollector
-from src.utils.logging import setup_logger  # Assuming a central logging setup exists
-
-# Setup logger for this module
-setup_logger("Collections")
-logger = logging.getLogger(__name__)
 
 
 class RedditCollector(BaseCollector):
@@ -28,19 +25,24 @@ class RedditCollector(BaseCollector):
     - Fetches posts using various sorting methods (hot, new, top, rising).
     - Searches for posts mentioning specific stock symbols.
     - Collects comments for fetched posts.
-    - Sends data to Kafka topics.
+    - Sends data to Kafka topics using KafkaProducerWrapper.
     - Includes basic handling for rate limits and API errors.
     - Uses external configuration for settings.
+    - Uses Loguru logger provided by BaseCollector.
     """
 
-    DEFAULT_CONFIG_PATH = (
-        Path(__file__).resolve().parents[4]
+    DEFAULT_REDDIT_CONFIG_PATH = (
+        Path(__file__).resolve().parents[5]
         / "config"
         / "reddit"
         / "reddit_collector_config.yaml"
     )
     DEFAULT_ENV_PATH = (
         Path(__file__).resolve().parents[5] / "config" / "reddit" / ".env"
+    )
+    # Define a default Kafka config path (adjust if needed)
+    DEFAULT_KAFKA_CONFIG_PATH = (
+        Path(__file__).resolve().parents[5] / "config" / "kafka" / "kafka_config.yaml"
     )
 
     def __init__(
@@ -49,13 +51,23 @@ class RedditCollector(BaseCollector):
         reddit_config_path: Optional[str] = None,
         env_path: Optional[str] = None,
     ):
-        # Initialize BaseCollector first (handles Kafka setup)
-        super().__init__(
-            "reddit_data_collector", kafka_config_path,
-        )  # BaseCollector likely loads kafka_config internally
+        # Initialize BaseCollector first (provides self.logger)
+        super().__init__(collector_name="RedditDataCollector")
+
+        # Load Kafka Config
+        self.kafka_config_path = Path(
+            kafka_config_path or self.DEFAULT_KAFKA_CONFIG_PATH
+        )
+        self._load_kafka_config()  # Load Kafka settings first
+
+        # Initialize Kafka Producer
+        self.kafka_producer: Optional[KafkaProducerWrapper] = None
+        self._initialize_kafka_producer()  # Initialize after loading config
 
         # Load Reddit specific configuration
-        self.config_path = Path(reddit_config_path or self.DEFAULT_CONFIG_PATH)
+        self.reddit_config_path = Path(
+            reddit_config_path or self.DEFAULT_REDDIT_CONFIG_PATH
+        )
         self.env_path = Path(env_path or self.DEFAULT_ENV_PATH)
         self._load_reddit_config()
 
@@ -63,14 +75,75 @@ class RedditCollector(BaseCollector):
         self.reddit = self._initialize_reddit_client()
 
         self.running = False
-        # Post tracking (consider more robust storage if memory becomes an issue)
+        # Post tracking
         self.collected_post_ids_this_run: Set[str] = set()
+
+    def _load_kafka_config(self):
+        """Loads Kafka configuration from a YAML file."""
+        self.logger.info(f"Loading Kafka configuration from: {self.kafka_config_path}")
+        try:
+            with open(self.kafka_config_path, "r") as f:
+                self.kafka_config = yaml.safe_load(f)
+                if not self.kafka_config:
+                    raise ValueError("Kafka config file is empty or invalid.")
+            self.logger.info("Kafka configuration loaded successfully.")
+        except FileNotFoundError:
+            self.logger.error(
+                f"Kafka configuration file not found at {self.kafka_config_path}. Cannot initialize producer."
+            )
+            self.kafka_config = {}  # Ensure kafka_config exists but is empty
+            # Decide if this is a fatal error
+            # raise # Option: re-raise if Kafka is essential
+        except Exception as e:
+            self.logger.exception(
+                f"Error loading Kafka configuration from {self.kafka_config_path}: {e}"
+            )
+            raise  # Re-raise as Kafka config is critical
+
+    def _initialize_kafka_producer(self):
+        """Initializes the KafkaProducerWrapper."""
+        if not self.kafka_config or "bootstrap_servers" not in self.kafka_config:
+            self.logger.error(
+                "Cannot initialize Kafka producer: Missing bootstrap_servers in Kafka config."
+            )
+            return  # Producer remains None
+
+        try:
+            bootstrap_servers = self.kafka_config["bootstrap_servers"]
+            producer_settings = self.kafka_config.get("producer_settings", {})
+            client_id = producer_settings.get(
+                "client_id", f"reddit-collector-{os.getpid()}"
+            )  # Example client_id
+            acks = producer_settings.get("acks", 1)
+            retries = producer_settings.get("retries", 3)
+            # Pass other settings directly
+            extra_kwargs = {
+                k: v
+                for k, v in producer_settings.items()
+                if k not in ["client_id", "acks", "retries"]
+            }
+
+            self.kafka_producer = KafkaProducerWrapper(
+                bootstrap_servers=bootstrap_servers,
+                client_id=client_id,
+                acks=acks,
+                retries=retries,
+                **extra_kwargs,  # Pass additional kafka-python args
+            )
+            self.logger.info("KafkaProducerWrapper initialized successfully.")
+        except Exception:
+            self.logger.exception("Failed to initialize KafkaProducerWrapper.")
+            self.kafka_producer = None  # Ensure it's None on failure
+            # Decide if this should halt initialization
+            # raise # Option: re-raise
 
     def _load_reddit_config(self):
         """Loads collector settings from a YAML configuration file."""
-        logger.info(f"Loading Reddit collector configuration from: {self.config_path}")
+        self.logger.info(
+            f"Loading Reddit collector configuration from: {self.reddit_config_path}"
+        )
         try:
-            with open(self.config_path, "r") as f:
+            with open(self.reddit_config_path, "r") as f:
                 self.reddit_config = yaml.safe_load(f)
 
             # Apply settings from config
@@ -101,13 +174,13 @@ class RedditCollector(BaseCollector):
                 "collection_params", {}
             ).get("comment_collection_min_comments", 5)
 
-            logger.info(
+            self.logger.info(
                 f"Reddit collector configured. Subreddits: {len(self.subreddits)}, Symbols: {len(self.symbols)}"
             )
 
         except FileNotFoundError:
-            logger.error(
-                f"Reddit configuration file not found at {self.config_path}. Using defaults."
+            self.logger.error(
+                f"Reddit configuration file not found at {self.reddit_config_path}. Using defaults."
             )
             # Set minimal defaults if config load fails
             self.subreddits = ["wallstreetbets", "investing", "stocks"]
@@ -121,14 +194,14 @@ class RedditCollector(BaseCollector):
             self.comment_collection_min_score = 10
             self.comment_collection_min_comments = 5
         except Exception as e:
-            logger.exception(
-                f"Error loading Reddit configuration from {self.config_path}: {e}"
+            self.logger.exception(
+                f"Error loading Reddit configuration from {self.reddit_config_path}: {e}"
             )
             raise  # Re-raise exception as config is critical
 
     def _initialize_reddit_client(self):
         """Initializes the PRAW Reddit API client using credentials from .env."""
-        logger.info(f"Loading Reddit credentials from: {self.env_path}")
+        self.logger.info(f"Loading Reddit credentials from: {self.env_path}")
         load_dotenv(dotenv_path=self.env_path)
 
         client_id = os.getenv("REDDIT_CLIENT_ID")
@@ -138,7 +211,7 @@ class RedditCollector(BaseCollector):
         user_agent = os.getenv("REDDIT_USER_AGENT", "MarketPulseAI Collector v1.0")
 
         if not all([client_id, client_secret, user_agent]):
-            logger.error(
+            self.logger.error(
                 "Missing required Reddit API credentials (ID, Secret, User-Agent) in environment variables."
             )
             raise ValueError("Missing Reddit API credentials.")
@@ -148,67 +221,64 @@ class RedditCollector(BaseCollector):
                 client_id=client_id,
                 client_secret=client_secret,
                 user_agent=user_agent,
-                username=username,  # Optional, needed for certain actions
-                password=password,  # Optional
-                # Consider adding timeout settings if needed
-                # request_timeout=30
+                username=username,
+                password=password,
             )
             # Test connection
-            reddit.user.me()  # Accessing me() requires username/password and checks auth
-            logger.info(
+            reddit.user.me()
+            self.logger.info(
                 f"PRAW Reddit client initialized successfully. Read-only: {reddit.read_only}"
             )
             return reddit
         except prawcore.exceptions.OAuthException as e:
-            logger.exception(f"Authentication error initializing Reddit client: {e}")
+            self.logger.exception(
+                f"Authentication error initializing Reddit client: {e}"
+            )
             raise
         except Exception as e:
-            logger.exception(f"Failed to initialize Reddit client: {e}")
+            self.logger.exception(f"Failed to initialize Reddit client: {e}")
             raise
 
     def _handle_api_error(self, error: Exception, context: str):
         """Handles common PRAW API errors with logging and potential backoff."""
         if isinstance(error, prawcore.exceptions.RequestException):
-            # Network errors, timeouts
-            logger.warning(
+            self.logger.warning(
                 f"Network error during {context}: {error}. Check connection."
             )
-            time.sleep(5)  # Simple backoff
+            time.sleep(5)
         elif isinstance(error, prawcore.exceptions.ResponseException):
-            # HTTP errors (4xx, 5xx)
-            logger.error(
+            self.logger.error(
                 f"HTTP error during {context}: {error}. Status: {error.response.status_code}"
             )
-            if error.response.status_code == 401:  # Unauthorized
-                logger.error("Reddit API authentication failed. Check credentials.")
-                self.stop()  # Stop collector if auth fails
-            elif error.response.status_code == 403:  # Forbidden
-                logger.warning(
+            if error.response.status_code == 401:
+                self.logger.error(
+                    "Reddit API authentication failed. Check credentials."
+                )
+                self.stop()
+            elif error.response.status_code == 403:
+                self.logger.warning(
                     f"Forbidden access during {context}. Check permissions or endpoint."
                 )
-            elif error.response.status_code == 404:  # Not Found
-                logger.warning(f"Resource not found during {context}: {error}")
-            elif error.response.status_code == 429:  # Rate limited
-                logger.warning(
+            elif error.response.status_code == 404:
+                self.logger.warning(f"Resource not found during {context}: {error}")
+            elif error.response.status_code == 429:
+                self.logger.warning(
                     f"Rate limited during {context}. PRAW should handle waits, but logging explicitely."
                 )
-                # PRAW usually handles sleep, but adding a small extra delay if needed
                 time.sleep(10)
-            elif error.response.status_code >= 500:  # Server error
-                logger.warning(
+            elif error.response.status_code >= 500:
+                self.logger.warning(
                     f"Reddit server error ({error.response.status_code}) during {context}. Retrying later."
                 )
                 time.sleep(15)
         elif isinstance(error, praw.exceptions.RedditAPIException):
-            # Specific Reddit API issues (e.g., invalid parameters)
-            logger.error(f"Reddit API error during {context}: {error}")
+            self.logger.error(f"Reddit API error during {context}: {error}")
             for sub_error in error.items:
-                logger.error(
+                self.logger.error(
                     f"  - API Error Type: {sub_error.error_type}, Message: {sub_error.message}"
                 )
         else:
-            # General unexpected errors
-            logger.exception(f"Unexpected error during {context}: {error}")
+            self.logger.exception(f"Unexpected error during {context}: {error}")
 
     def collect_posts_by_subreddit(
         self,
@@ -225,17 +295,16 @@ class RedditCollector(BaseCollector):
         subreddit_instance = None
         try:
             subreddit_instance = self.reddit.subreddit(subreddit_name)
-            # Check if subreddit exists and is accessible (light check)
             _ = subreddit_instance.display_name
-            logger.info(
+            self.logger.info(
                 f"Starting post collection for r/{subreddit_name} (Methods: {', '.join(sort_methods)})"
             )
         except (prawcore.exceptions.Redirect, prawcore.exceptions.NotFound):
-            logger.error(f"Subreddit r/{subreddit_name} not found or redirected.")
+            self.logger.error(f"Subreddit r/{subreddit_name} not found or redirected.")
             return
         except Exception as e:
             self._handle_api_error(e, f"accessing subreddit r/{subreddit_name}")
-            return  # Stop collection for this subreddit if initial access fails
+            return
 
         initial_collected_count = len(self.collected_post_ids_this_run)
 
@@ -256,16 +325,15 @@ class RedditCollector(BaseCollector):
                         limit=self.posts_per_subreddit,
                     )
             except Exception as e:
-                # Catch errors at the sort method level to continue with others
                 self._handle_api_error(
                     e, f"collecting {sort_method} posts from r/{subreddit_name}"
                 )
-                time.sleep(5)  # Wait a bit before next method
+                time.sleep(5)
 
         newly_collected = (
             len(self.collected_post_ids_this_run) - initial_collected_count
         )
-        logger.info(
+        self.logger.info(
             f"Finished collection for r/{subreddit_name}. Collected {newly_collected} new unique posts in this cycle."
         )
 
@@ -278,7 +346,7 @@ class RedditCollector(BaseCollector):
     ):
         """Helper to collect posts using a specific sort method/filter."""
         method_desc = f"{sort_method}" + (f"/{time_filter}" if time_filter else "")
-        logger.debug(
+        self.logger.debug(
             f"Fetching {limit} {method_desc} posts from r/{subreddit.display_name}"
         )
 
@@ -293,7 +361,7 @@ class RedditCollector(BaseCollector):
             elif sort_method == "rising":
                 posts_iterator = subreddit.rising(limit=limit)
             else:
-                logger.warning(
+                self.logger.warning(
                     f"Unsupported sort method/filter combination: {method_desc}"
                 )
                 return
@@ -305,11 +373,11 @@ class RedditCollector(BaseCollector):
                     self._process_post(post, collection_method=method_desc)
                     count += 1
                 else:
-                    logger.debug(
+                    self.logger.debug(
                         f"Skipping already collected post {post.id} from r/{subreddit.display_name}"
                     )
 
-            logger.debug(
+            self.logger.debug(
                 f"Fetched {count} new {method_desc} posts from r/{subreddit.display_name}"
             )
 
@@ -317,16 +385,19 @@ class RedditCollector(BaseCollector):
             self._handle_api_error(
                 e, f"fetching {method_desc} posts from r/{subreddit.display_name}"
             )
-            # Re-raise to be caught by the outer loop if necessary, or handle more gracefully
             raise
 
     def _process_post(self, post: praw.models.Submission, collection_method: str):
         """Processes a single Reddit post and sends it to Kafka."""
+        if not self.kafka_producer:
+            self.logger.error("Kafka producer not available. Cannot send post data.")
+            return  # Cannot proceed without producer
+
         try:
             post_data = {
                 "id": post.id,
                 "source": "reddit",
-                "content_type": "post",  # Differentiates posts from comments
+                "content_type": "post",
                 "subreddit": post.subreddit.display_name,
                 "title": post.title,
                 "author": str(post.author) if post.author else "[deleted]",
@@ -334,51 +405,53 @@ class RedditCollector(BaseCollector):
                 "post_created_datetime": datetime.fromtimestamp(
                     post.created_utc
                 ).isoformat()
-                + "Z",  # Use UTC ISO format
+                + "Z",
                 "score": post.score,
                 "upvote_ratio": post.upvote_ratio,
                 "num_comments": post.num_comments,
                 "selftext": post.selftext,
                 "url": post.url,
                 "is_self": post.is_self,
-                "permalink": f"https://www.reddit.com{post.permalink}",  # Full permalink
+                "permalink": f"https://www.reddit.com{post.permalink}",
                 "collection_method": collection_method,
-                "collection_timestamp": datetime.now().isoformat()
-                + "Z",  # Use UTC ISO format
-                # Calculate age on demand during processing if needed, avoids staleness
+                "collection_timestamp": datetime.now().isoformat() + "Z",
             }
 
-            # Simple Symbol Extraction (Placeholder for potentially more complex logic)
-            # Consider case-insensitivity and patterns like $AAPL
             detected_symbols = self._extract_symbols(post.title + " " + post.selftext)
             if detected_symbols:
-                post_data["detected_symbols"] = list(
-                    detected_symbols
-                )  # Ensure list format
+                post_data["detected_symbols"] = list(detected_symbols)
 
             # Send raw post data
             kafka_topic_raw = self.kafka_config["topics"]["social_media_reddit_raw"]
-            self.send_to_kafka(kafka_topic_raw, post_data, key=f"reddit_post_{post.id}")
-            logger.debug(
-                f"Sent post {post.id} from r/{post.subreddit.display_name} to Kafka topic {kafka_topic_raw}"
+            success_raw = self.kafka_producer.send_message(
+                topic=kafka_topic_raw, value=post_data, key=f"reddit_post_{post.id}"
             )
+            if success_raw:
+                self.logger.debug(
+                    f"Sent post {post.id} from r/{post.subreddit.display_name} to Kafka topic {kafka_topic_raw}"
+                )
+            # KafkaProducerWrapper already logs errors on failure
 
             # Send to symbol-specific topic if symbols detected
             if detected_symbols:
                 kafka_topic_symbols = self.kafka_config["topics"][
                     "social_media_reddit_symbols"
                 ]
+                symbols_sent_count = 0
                 for symbol in detected_symbols:
                     symbol_data = post_data.copy()
-                    symbol_data["symbol"] = symbol  # Add symbol context
-                    self.send_to_kafka(
-                        kafka_topic_symbols,
-                        symbol_data,
+                    symbol_data["symbol"] = symbol
+                    success_symbol = self.kafka_producer.send_message(
+                        topic=kafka_topic_symbols,
+                        value=symbol_data,
                         key=f"reddit_symbol_{symbol}_{post.id}",
                     )
-                logger.debug(
-                    f"Sent post {post.id} to Kafka topic {kafka_topic_symbols} for symbols: {', '.join(detected_symbols)}"
-                )
+                    if success_symbol:
+                        symbols_sent_count += 1
+                if symbols_sent_count > 0:
+                    self.logger.debug(
+                        f"Sent post {post.id} to Kafka topic {kafka_topic_symbols} for {symbols_sent_count} symbols: {', '.join(detected_symbols)}"
+                    )
 
             # Collect comments if post meets criteria
             if (
@@ -387,40 +460,64 @@ class RedditCollector(BaseCollector):
             ):
                 self.collect_comments(post.id, limit=self.comments_per_post)
 
+        except KeyError as e:
+            self.logger.error(
+                f"Missing key in Kafka config topics section: {e}. Cannot send message."
+            )
         except Exception as e:
-            # Log error but don't let one post failure stop the collector
-            logger.error(
+            self.logger.error(
                 f"Error processing post {getattr(post, 'id', 'N/A')}: {e}",
                 exc_info=True,
             )
 
     def _extract_symbols(self, text: str) -> Set[str]:
-        """Extracts potential stock symbols mentioned in text."""
-        # Basic implementation: case-insensitive match against configured symbols
-        # Improvement idea: Use regex for $SYMBOL or common patterns
-        # Improvement idea: Use NLP for better context checking
-        detected = set()
-        # Normalize text for easier matching
-        text_upper = text.upper()
-        # Use word boundaries or splits to avoid partial matches (e.g., 'CAPITAL' matching 'AAPL')
-        words = set(text_upper.split())  # Simple split, regex \b would be better
+        """
+        Extracts potential stock symbols mentioned in text using regex.
+        Matches symbols like $AAPL or AAPL (case-insensitive) as whole words.
+        """
+        if not self.symbols:
+            return set()
+        if not text:
+            return set()
 
-        for symbol in self.symbols:
-            # Check for symbol possibly surrounded by common punctuation or as whole word
-            # This is still basic and can be improved significantly.
-            if symbol.upper() in words:
-                detected.add(symbol)
-            elif f"${symbol.upper()}" in words:
-                detected.add(symbol)
+        symbol_map = {
+            str(s).upper(): str(s) for s in self.symbols if isinstance(s, (str, bytes))
+        }
+        if not symbol_map:
+            self.logger.warning("No valid string symbols available for extraction.")
+            return set()
+
+        try:
+            escaped_symbols = [re.escape(s_upper) for s_upper in symbol_map.keys()]
+            symbols_pattern_part = "|".join(escaped_symbols)
+            pattern = rf"(?:\$)?\b(?:{symbols_pattern_part})\b"
+        except re.error as e:
+            self.logger.error(f"Failed to build regex pattern for symbols: {e}")
+            return set()
+
+        detected = set()
+        try:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                cleaned_match = match.lstrip("$").upper()
+                if cleaned_match in symbol_map:
+                    detected.add(symbol_map[cleaned_match])
+        except re.error as e:
+            self.logger.error(f"Regex error during symbol extraction: {e}")
+        except Exception as e:
+            self.logger.exception(f"Unexpected error during symbol extraction: {e}")
 
         return detected
 
     def collect_comments(self, post_id: str, limit: Optional[int] = None):
         """Collects top-level comments for a given post ID."""
-        logger.debug(f"Collecting comments for post {post_id} (Limit: {limit})")
+        if not self.kafka_producer:
+            self.logger.error("Kafka producer not available. Cannot send comment data.")
+            return  # Cannot proceed without producer
+
+        self.logger.debug(f"Collecting comments for post {post_id} (Limit: {limit})")
         try:
             submission = self.reddit.submission(id=post_id)
-            # Fetch comments, replace_more(limit=0) avoids loading deeper replies efficiently
             submission.comments.replace_more(limit=0)
 
             comment_count = 0
@@ -429,14 +526,13 @@ class RedditCollector(BaseCollector):
             ]
 
             for comment in submission.comments.list():
-                # Ensure it's a Comment object, not MoreComments
                 if not isinstance(comment, praw.models.Comment):
                     continue
 
                 comment_data = {
                     "id": comment.id,
                     "source": "reddit",
-                    "content_type": "comment",  # Differentiate comments
+                    "content_type": "comment",
                     "post_id": post_id,
                     "subreddit": comment.subreddit.display_name,
                     "body": comment.body,
@@ -447,90 +543,114 @@ class RedditCollector(BaseCollector):
                     ).isoformat()
                     + "Z",
                     "score": comment.score,
-                    "parent_id": comment.parent_id,  # Indicates if it's a reply
+                    "parent_id": comment.parent_id,
                     "is_submitter": comment.is_submitter,
-                    "permalink": f"https://www.reddit.com{comment.permalink}",  # Full permalink
+                    "permalink": f"https://www.reddit.com{comment.permalink}",
                     "collection_timestamp": datetime.now().isoformat() + "Z",
                 }
 
-                # Extract symbols from comment body
                 detected_symbols = self._extract_symbols(comment.body)
                 if detected_symbols:
                     comment_data["detected_symbols"] = list(detected_symbols)
 
-                # Send comment data
-                self.send_to_kafka(
-                    kafka_topic_comments,
-                    comment_data,
+                # Send comment data using KafkaProducerWrapper
+                success = self.kafka_producer.send_message(
+                    topic=kafka_topic_comments,
+                    value=comment_data,
                     key=f"reddit_comment_{comment.id}",
                 )
+                # KafkaProducerWrapper handles logging errors on send failure
 
-                comment_count += 1
-                if limit is not None and comment_count >= limit:
-                    logger.debug(f"Reached comment limit ({limit}) for post {post_id}")
-                    break
+                if success:
+                    comment_count += 1
+                    if limit is not None and comment_count >= limit:
+                        self.logger.debug(
+                            f"Reached comment limit ({limit}) for post {post_id}"
+                        )
+                        break
 
-            logger.debug(f"Collected {comment_count} comments for post {post_id}")
+            self.logger.debug(
+                f"Collected and attempted to send {comment_count} comments for post {post_id}"
+            )
 
         except prawcore.exceptions.NotFound:
-            logger.warning(f"Post {post_id} not found when trying to collect comments.")
+            self.logger.warning(
+                f"Post {post_id} not found when trying to collect comments."
+            )
+        except KeyError as e:
+            self.logger.error(
+                f"Missing key in Kafka config topics section: {e}. Cannot send comments."
+            )
         except Exception as e:
             self._handle_api_error(e, f"collecting comments for post {post_id}")
 
     def search_for_symbols(self, time_filters: Optional[List[str]] = None):
         """Searches Reddit globally for posts mentioning tracked symbols."""
+        if not self.kafka_producer:
+            self.logger.error(
+                "Kafka producer not available. Cannot process symbols found via search."
+            )
+            return  # Cannot proceed without producer
+
         if time_filters is None:
             time_filters = self.default_time_filters
 
-        logger.info(f"Starting symbol search for: {', '.join(self.symbols)}")
+        self.logger.info(f"Starting symbol search for: {', '.join(self.symbols)}")
 
         for symbol in self.symbols:
-            logger.debug(f"Searching for symbol: {symbol}")
+            self.logger.debug(f"Searching for symbol: {symbol}")
             for time_filter in time_filters:
                 try:
-                    # Search across all of Reddit ('all' subreddit)
-                    # Consider searching within finance-related subreddits only for higher relevance
-                    # Use relevance sort, could experiment with 'new' or 'comments'
-                    search_results = self.reddit.subreddit(
-                        "all"
-                    ).search(
-                        f'"{symbol}" OR ${symbol}',  # More specific query, include $ prefix
-                        sort="relevance",  # or 'new'
+                    search_results = self.reddit.subreddit("all").search(
+                        f'"{symbol}" OR ${symbol}',
+                        sort="relevance",
                         time_filter=time_filter,
-                        limit=self.posts_per_symbol,  # Limit per symbol per time filter
+                        limit=self.posts_per_symbol,
                     )
 
                     result_count = 0
                     for post in search_results:
                         if post.id not in self.collected_post_ids_this_run:
                             self.collected_post_ids_this_run.add(post.id)
+                            # Reuses _process_post which handles Kafka sending
                             self._process_post(
                                 post, collection_method=f"symbol_search/{time_filter}"
                             )
                             result_count += 1
                         else:
-                            logger.debug(
+                            self.logger.debug(
                                 f"Skipping already collected post {post.id} found via symbol search for {symbol}"
                             )
 
-                    logger.debug(
-                        f"Found {result_count} new posts mentioning '{symbol}' in time filter '{time_filter}'"
+                    self.logger.debug(
+                        f"Found and processed {result_count} new posts mentioning '{symbol}' in time filter '{time_filter}'"
                     )
-                    time.sleep(2)  # Small delay between searches to be polite to API
+                    time.sleep(2)
 
                 except Exception as e:
                     self._handle_api_error(
                         e,
                         f"searching for symbol {symbol} with time filter {time_filter}",
                     )
-                    time.sleep(5)  # Wait before next search if error occurs
+                    time.sleep(5)
 
-        logger.info("Finished symbol search cycle.")
+        self.logger.info("Finished symbol search cycle.")
 
     def collect(self):
         """Main collection loop."""
+        if not self.kafka_producer:
+            self.logger.error(
+                "Cannot start collection: Kafka producer is not initialized."
+            )
+            return
+        if not self.reddit:
+            self.logger.error(
+                "Cannot start collection: Reddit client is not initialized."
+            )
+            return
+
         self.running = True
-        logger.info(
+        self.logger.info(
             f"Starting Reddit collector."
             f" Interval: {self.collection_interval}s."
             f" Subreddits: {len(self.subreddits)}."
@@ -540,15 +660,17 @@ class RedditCollector(BaseCollector):
         try:
             while self.running:
                 start_time = time.time()
-                logger.info("Starting new collection cycle...")
-                self.collected_post_ids_this_run.clear()  # Reset for this cycle
+                self.logger.info("Starting new collection cycle...")
+                self.collected_post_ids_this_run.clear()
 
                 # --- Collect posts from configured subreddits ---
                 for subreddit_name in self.subreddits:
                     if not self.running:
-                        break  # Allow graceful stop
+                        break
                     self.collect_posts_by_subreddit(subreddit_name)
-                    time.sleep(1)  # Small delay between subreddits
+                    if not self.running:
+                        break  # Check again after potentially long call
+                    time.sleep(1)
 
                 if not self.running:
                     break
@@ -559,52 +681,83 @@ class RedditCollector(BaseCollector):
                 # --- Cycle complete ---
                 end_time = time.time()
                 elapsed_time = end_time - start_time
-                logger.info(
+                self.logger.info(
                     f"Collection cycle finished in {elapsed_time:.2f} seconds. "
-                    f"Collected {len(self.collected_post_ids_this_run)} unique posts/comments this cycle."
+                    f"Processed {len(self.collected_post_ids_this_run)} unique posts/comments this cycle."
                 )
 
                 # --- Sleep until next cycle ---
                 sleep_time = max(0, self.collection_interval - elapsed_time)
-                logger.info(f"Sleeping for {sleep_time:.2f} seconds...")
-                # Use a loop with smaller sleeps to allow faster shutdown
+                self.logger.info(f"Sleeping for {sleep_time:.2f} seconds...")
                 sleep_end = time.time() + sleep_time
-                # TODO Remove this for prod and uncomment below
-                break
+                # TODO: Remove break and uncomment loop for production
+                break  # Keep break for testing/dev
                 # while self.running and time.time() < sleep_end:
                 #     time.sleep(1)
 
         except KeyboardInterrupt:
-            logger.info("Keyboard interrupt received. Stopping collector.")
+            self.logger.info("Keyboard interrupt received. Stopping collector.")
         except Exception as e:
-            logger.exception(f"Critical error in main collection loop: {e}")
+            self.logger.exception(f"Critical error in main collection loop: {e}")
         finally:
             self.stop()
 
     def stop(self):
         """Stops the data collection loop gracefully."""
         if self.running:
-            self.running = False
-            logger.info("Stopping Reddit data collector...")
-            self.cleanup()  # Call cleanup from BaseCollector if needed
-            logger.info("Reddit data collector stopped.")
+            self.running = False  # Signal loops to stop
+            self.logger.info("Stopping Reddit data collector...")
+            self.cleanup()  # Perform cleanup actions
+            self.logger.info("Reddit data collector stopped.")
+        else:
+            self.logger.info("Stop called, but collector was not running.")
+
+    def cleanup(self) -> None:
+        """Closes the Kafka producer and performs base cleanup."""
+        self.logger.info("Cleaning up Reddit collector resources...")
+        if self.kafka_producer:
+            self.logger.info("Closing Kafka producer...")
+            self.kafka_producer.close()  # Use wrapper's close method
+        else:
+            self.logger.warning("Kafka producer was not initialized, nothing to close.")
+        super().cleanup()  # Call base cleanup if it exists and does something
+        self.logger.info("Reddit collector cleanup finished.")
 
 
 # Example Usage (if run directly)
 if __name__ == "__main__":
-    # Configure logging for standalone run
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    # Configure Loguru for standalone run
+    # Use stderr and set level to INFO for clarity
+    logger.remove()  # Remove default handler if any
+    logger.add(
+        lambda msg: print(
+            msg, end=""
+        ),  # Use print to avoid extra newline from default sink
+        level="INFO",
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
     )
 
-    # Create collector instance (adjust paths if needed)
-    collector = RedditCollector()
-
+    # Create collector instance (will use default paths or env vars)
+    # Assumes config files and .env are correctly placed relative to this script
+    # or absolute paths are provided via environment variables if needed.
+    collector = None
     try:
+        logger.info("Creating RedditCollector instance for standalone run...")
+        collector = RedditCollector()
+        logger.info("RedditCollector instance created.")
+
+        logger.info("Starting collector...")
         collector.collect()
-    except Exception:
-        logger.exception("Collector failed to run.")
+
+    except ValueError as e:
+        logger.error(f"Configuration error during startup: {e}")
+    except Exception as e:
+        logger.exception(f"Collector failed to run due to an unexpected error: {e}")
     finally:
-        # Ensure stop is called even if collect loop exits unexpectedly
-        collector.stop()
+        logger.info("Ensuring collector is stopped in finally block...")
+        # Ensure stop is called even if collect loop exits unexpectedly or initialization fails partially
+        if collector:
+            collector.stop()
+        else:
+            logger.warning("Collector instance was not successfully created.")
+        logger.info("Standalone script finished.")
