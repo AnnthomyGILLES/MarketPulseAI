@@ -17,14 +17,13 @@ class BaseCollector(abc.ABC):
         collector_name: str,
     ):
         """
-        Initializes the collector and assigns a logger context.
+        Initializes the collector.
 
         Args:
             collector_name: Identifier for the collector instance (used in logs).
         """
         self.collector_name = collector_name
-        self.logger = logger.bind(collector=self.collector_name)
-        self.logger.info(f"Collector '{self.collector_name}' initialized.")
+        logger.info(f"Collector '{self.collector_name}' initialized.")
 
     @abc.abstractmethod
     def collect(self) -> None:
@@ -41,7 +40,7 @@ class BaseCollector(abc.ABC):
         Implementations should handle stopping loops, releasing resources,
         and ensuring clean termination.
         """
-        self.logger.info(f"Stop signal received for '{self.collector_name}'.")
+        logger.info(f"Stop signal received for '{self.collector_name}'.")
         # Subclass implementation should follow
 
     def cleanup(self) -> None:
@@ -50,6 +49,6 @@ class BaseCollector(abc.ABC):
 
         Override this method to perform specific cleanup tasks not handled in stop().
         """
-        self.logger.debug(f"Performing base cleanup for '{self.collector_name}'...")
+        logger.debug(f"Performing base cleanup for '{self.collector_name}'...")
         # Subclasses can override to add specific cleanup actions.
-        self.logger.debug(f"Base cleanup finished for '{self.collector_name}'.")
+        logger.debug(f"Base cleanup finished for '{self.collector_name}'.")

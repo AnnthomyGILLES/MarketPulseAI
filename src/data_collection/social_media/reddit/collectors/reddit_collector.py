@@ -2,6 +2,7 @@
 
 import os
 import re
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -221,9 +222,7 @@ class RedditCollector(BaseCollector):
             )
             return reddit
         except prawcore.exceptions.OAuthException as e:
-            logger.exception(
-                f"Authentication error initializing Reddit client: {e}"
-            )
+            logger.exception(f"Authentication error initializing Reddit client: {e}")
             raise
         except Exception as e:
             logger.exception(f"Failed to initialize Reddit client: {e}")
@@ -241,9 +240,7 @@ class RedditCollector(BaseCollector):
                 f"HTTP error during {context}: {error}. Status: {error.response.status_code}"
             )
             if error.response.status_code == 401:
-                logger.error(
-                    "Reddit API authentication failed. Check credentials."
-                )
+                logger.error("Reddit API authentication failed. Check credentials.")
                 self.stop()
             elif error.response.status_code == 403:
                 logger.warning(
@@ -564,9 +561,7 @@ class RedditCollector(BaseCollector):
             )
 
         except prawcore.exceptions.NotFound:
-            logger.warning(
-                f"Post {post_id} not found when trying to collect comments."
-            )
+            logger.warning(f"Post {post_id} not found when trying to collect comments.")
         except KeyError as e:
             logger.error(
                 f"Missing key in Kafka config topics section: {e}. Cannot send comments."
@@ -629,14 +624,10 @@ class RedditCollector(BaseCollector):
     def collect(self):
         """Main collection loop."""
         if not self.kafka_producer:
-            logger.error(
-                "Cannot start collection: Kafka producer is not initialized."
-            )
+            logger.error("Cannot start collection: Kafka producer is not initialized.")
             return
         if not self.reddit:
-            logger.error(
-                "Cannot start collection: Reddit client is not initialized."
-            )
+            logger.error("Cannot start collection: Reddit client is not initialized.")
             return
 
         self.running = True
@@ -717,14 +708,12 @@ class RedditCollector(BaseCollector):
 # Example Usage (if run directly)
 if __name__ == "__main__":
     # Configure Loguru for standalone run
-    # Use stderr and set level to INFO for clarity
-    logger.remove()  # Remove default handler if any
+    logger.remove()
     logger.add(
-        lambda msg: print(
-            msg, end=""
-        ),  # Use print to avoid extra newline from default sink
-        level="INFO",
+        sys.stderr,
+        level="DEBUG",
         format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+        colorize=True,
     )
 
     # Create collector instance (will use default paths or env vars)
