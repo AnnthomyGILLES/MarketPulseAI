@@ -51,7 +51,7 @@ class MarketDataValidationService:
         self.validator = MarketDataValidator()
 
         # Initialize Kafka consumer and producers
-        bootstrap_servers = self.config["kafka"]["bootstrap_servers_dev"]
+        bootstrap_servers = self.config["kafka"]["bootstrap_servers"]
         input_topic = self.config["kafka"]["topics"]["market_data_raw"]
 
         logger.info(f"Creating Kafka consumer for topic: {input_topic}")

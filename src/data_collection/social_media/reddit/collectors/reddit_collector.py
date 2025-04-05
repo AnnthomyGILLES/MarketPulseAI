@@ -409,7 +409,7 @@ class RedditCollector(BaseCollector):
                 post_data["detected_symbols"] = list(detected_symbols)
 
             # Send raw post data
-            kafka_topic_raw = self.kafka_config["topics"]["social_media_reddit_raw"]
+            kafka_topic_raw = self.kafka_config["topics"]["social_media_reddit_posts"]
             success_raw = self.kafka_producer.send_message(
                 topic=kafka_topic_raw, value=post_data, key=f"reddit_post_{post.id}"
             )

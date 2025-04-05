@@ -69,7 +69,7 @@ class RedditValidationConsumer:
 
             # Define input topics and map to consumer groups
             topic_group_map = {
-                self.config["topics"]["social_media_reddit_raw"]: self.config[
+                self.config["topics"]["social_media_reddit_posts"]: self.config[
                     "consumer_groups"
                 ]["reddit_validation"],
                 self.config["topics"]["social_media_reddit_comments"]: self.config[
@@ -209,7 +209,7 @@ class RedditValidationConsumer:
                 validated_data_dict = validated_model.model_dump()
 
                 target_producer_key = None
-                if source_topic == self.config["topics"]["social_media_reddit_raw"]:
+                if source_topic == self.config["topics"]["social_media_reddit_posts"]:
                     target_producer_key = "validated_posts"
                 elif (
                     source_topic
