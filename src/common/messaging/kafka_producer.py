@@ -5,7 +5,7 @@ from typing import Any, Dict, Union, Optional, List
 
 # Use kafka-python as in the original file
 from kafka import KafkaProducer
-from kafka.errors import KafkaError, KafkaTimeoutError
+from kafka.errors import KafkaError
 from loguru import logger
 
 # Assuming these utilities exist and work as expected
@@ -69,66 +69,47 @@ class KafkaProducerWrapper:
         topic: str,
         value: Dict[str, Any],
         key: Optional[Any] = None,
-        send_retries: int = 2,  # Retries specific to this send call
-        retry_delay_secs: float = 0.5,
     ) -> bool:
         """
-        Sends a single message to a specified Kafka topic.
+        Sends a single message to a specified Kafka topic using the configured producer.
+
+        Relies on the KafkaProducer's internal retry mechanism ('retries' parameter during initialization).
 
         Args:
             topic: The target Kafka topic.
             value: The message value (dictionary, will be serialized).
             key: The message key (optional, will be serialized).
-            send_retries: Number of attempts for this specific send operation.
-            retry_delay_secs: Delay between retries in seconds.
 
         Returns:
-            True if the message was successfully sent (queued by the producer), False otherwise.
-            Note: This does not guarantee delivery; use callbacks for confirmation if needed.
+            True if the message was successfully accepted into the producer's buffer for sending,
+            False if an error occurred during the initial send attempt.
+            Note: True does not guarantee delivery; inspect the Future object returned by
+                  producer.send() or use callbacks for confirmation if needed.
         """
-        future = None
-        for attempt in range(send_retries + 1):
-            try:
-                logger.debug(
-                    f"Attempt {attempt + 1}: Sending message to topic '{topic}' (Key: {key})"
-                )
-                # Send the message - kafka-python handles serialization via configured serializers
-                future = self.producer.send(topic=topic, value=value, key=key)
-                # Optional: Wait for send confirmation (can impact performance)
-                # record_metadata = future.get(timeout=10) # Waits for ack based on 'acks' config
-                # logger.debug(f"Message sent: {record_metadata.topic} [{record_metadata.partition}] @ {record_metadata.offset}")
-                return True  # Message accepted by producer buffer
-
-            except KafkaTimeoutError as e:
-                logger.warning(
-                    f"Attempt {attempt + 1} failed: Timeout sending message to topic '{topic}'. Error: {e}"
-                )
-                if attempt < send_retries:
-                    logger.info(f"Retrying in {retry_delay_secs} seconds...")
-                    time.sleep(retry_delay_secs)
-                else:
-                    logger.error(
-                        f"Failed to send message to topic '{topic}' after {send_retries + 1} attempts due to timeout."
-                    )
-                    return False
-            except KafkaError as e:
-                logger.error(
-                    f"Attempt {attempt + 1} failed: KafkaError sending message to topic '{topic}'. Error: {e}"
-                )
-                if attempt < send_retries:
-                    logger.info(f"Retrying in {retry_delay_secs} seconds...")
-                    time.sleep(retry_delay_secs)
-                else:
-                    logger.error(
-                        f"Failed to send message to topic '{topic}' after {send_retries + 1} attempts due to KafkaError."
-                    )
-                    return False
-            except Exception as e:
-                logger.exception(
-                    f"Unexpected error sending message to topic '{topic}' on attempt {attempt + 1}: {e}"
-                )
-                return False
-        return False
+        try:
+            logger.debug(f"Attempting to send message to topic '{topic}' (Key: {key})")
+            # Send the message - kafka-python handles serialization and configured retries.
+            # The send() call is asynchronous and returns a Future.
+            # We are not waiting for the future here, just checking for immediate errors.
+            self.producer.send(topic=topic, value=value, key=key)
+            # Optional: To wait for acknowledgment, you could do:
+            # future = self.producer.send(topic=topic, value=value, key=key)
+            # record_metadata = future.get(timeout=10) # Raises KafkaTimeoutError on timeout
+            # logger.debug(f"Message sent and acknowledged: {record_metadata.topic}...")
+            logger.debug(f"Message for topic '{topic}' accepted by producer buffer.")
+            return True
+        except KafkaError as e:
+            # Errors that might occur immediately (e.g., serialization errors, certain connection issues)
+            logger.error(
+                f"KafkaError occurred immediately when trying to send to topic '{topic}'. Error: {e}"
+            )
+            return False
+        except Exception as e:
+            # Catch other potential immediate exceptions
+            logger.exception(
+                f"Unexpected error occurred immediately when trying to send to topic '{topic}': {e}"
+            )
+            return False
 
     def send_json_stream(
         self, file_path: Union[str, Path], topic: str, send_retries: int = 2
@@ -159,9 +140,7 @@ class KafkaProducerWrapper:
                                 f"Skipping non-dictionary object in {file_path}:{line_num}"
                             )
                             continue
-                        success = self.send_message(
-                            topic=topic, value=obj, send_retries=send_retries
-                        )
+                        success = self.send_message(topic=topic, value=obj)
                         if success:
                             sent_count += 1
                         else:
@@ -227,3 +206,103 @@ class KafkaProducerWrapper:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit context manager, ensuring producer is closed."""
         self.close()
+
+
+# Example Usage
+if __name__ == "__main__":
+    import sys
+    import os
+    import tempfile
+
+    # Configure Loguru for console output
+    logger.remove()  # Remove default handler
+    logger.add(sys.stderr, level="DEBUG")
+
+    KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "localhost:9093")
+    TEST_TOPIC = "my-test-topic"
+
+    logger.info(f"Attempting to connect to Kafka brokers at {KAFKA_BROKERS}")
+
+    try:
+        # Use context manager to ensure close() is called
+        with KafkaProducerWrapper(bootstrap_servers=KAFKA_BROKERS) as producer:
+            logger.info("KafkaProducerWrapper instantiated successfully.")
+
+            # 1. Send a single message
+            test_message = {"id": 1, "payload": "Hello Kafka!"}
+            logger.info(
+                f"Sending single message to topic '{TEST_TOPIC}': {test_message}"
+            )
+            success = producer.send_message(
+                topic=TEST_TOPIC, value=test_message, key="message1"
+            )
+            if success:
+                logger.info("Single message accepted by producer buffer.")
+            else:
+                logger.warning(
+                    "Failed to send single message (check broker availability/config)."
+                )
+
+            # Allow some time for the message to potentially be sent before the next step
+            time.sleep(1)
+
+            # 2. Send messages from a JSON Lines stream
+            logger.info("Creating temporary JSON Lines file for stream test...")
+            # Create a temporary file
+            with tempfile.NamedTemporaryFile(
+                mode="w+", suffix=".jsonl", delete=False
+            ) as temp_file:
+                temp_file_path = temp_file.name
+                json_objects = [
+                    {"id": 10, "data": "stream_data_1", "timestamp": time.time()},
+                    {"id": 11, "data": "stream_data_2", "timestamp": time.time()},
+                    {"invalid": "this line is not a dict"},  # Test invalid line
+                    json.dumps(
+                        {"id": 12, "data": "stream_data_3", "timestamp": time.time()}
+                    )
+                    + "\n",  # Already string
+                ]
+                for item in json_objects:
+                    if isinstance(item, dict):
+                        # Use the same serializer as the producer might use internally for consistency demo
+                        serialized_line = producer.producer.config["value_serializer"](
+                            item
+                        )
+                        temp_file.write(
+                            serialized_line.decode("utf-8") + "\n"
+                        )  # Write serialized string
+                    else:
+                        temp_file.write(
+                            str(item) + "\n"
+                        )  # Write non-dict/pre-string directly
+
+                logger.info(f"Temporary file created: {temp_file_path}")
+
+            logger.info(
+                f"Sending JSON stream from '{temp_file_path}' to topic '{TEST_TOPIC}'..."
+            )
+            sent_count = producer.send_json_stream(
+                file_path=temp_file_path, topic=TEST_TOPIC
+            )
+            logger.info(f"Finished sending stream. {sent_count} messages sent/queued.")
+
+            # Clean up the temporary file
+            try:
+                os.remove(temp_file_path)
+                logger.info(f"Temporary file '{temp_file_path}' removed.")
+            except OSError as e:
+                logger.error(f"Error removing temporary file '{temp_file_path}': {e}")
+
+            # The producer will be flushed and closed automatically by the __exit__ method here
+            logger.info("Exiting 'with' block, producer will be flushed and closed.")
+
+    except KafkaError as e:
+        logger.error(
+            f"Kafka connection or setup error: {e}. Ensure Kafka is running at {KAFKA_BROKERS}"
+        )
+    except Exception as e:
+        logger.exception(
+            f"An unexpected error occurred during the example execution: {e}"
+        )
+
+    logger.info("Example script finished.")
