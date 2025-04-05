@@ -75,55 +75,83 @@ class RedditValidationService:  # Renamed class
             bootstrap_servers = self.kafka_config["bootstrap_servers"]
             topics_config = self.kafka_config["topics"]
             consumer_groups = self.kafka_config.get("consumer_groups", {})
+
+            # --- Consumer Setup ---
+            # Get defaults from the 'consumer' section of the config
+            consumer_defaults = self.kafka_config.get("consumer", {})
+            logger.debug(f"Loaded consumer defaults: {consumer_defaults}")
+
             # Define input topics and map to consumer groups
             topic_group_map = {
                 topics_config["social_media_reddit_posts"]: consumer_groups.get(
                     "reddit_validation",
-                    "reddit-validation-group",  # Default group
+                    "reddit-validation-group",  # Default group if not in config
                 ),
                 topics_config["social_media_reddit_comments"]: consumer_groups.get(
                     "reddit_comments_validation", "reddit-comments-validation-group"
                 ),
-                # Assuming symbol data might also come through raw post/comment topics
-                # If there's a dedicated raw symbols topic, add it here.
-                # topics_config["social_media_reddit_raw_symbols"]: consumer_groups.get(
-                #     "reddit_symbols_validation", "reddit-symbols-validation-group"
-                # ),
-            }
-
-            # Consumer configuration defaults
-            consumer_defaults = self.kafka_config.get("consumer_defaults", {})
-            base_consumer_conf = {
-                "auto.offset.reset": consumer_defaults.get(
-                    "auto.offset.reset", "earliest"
-                ),
-                "enable.auto.commit": consumer_defaults.get("enable.auto.commit", True),
-                "auto.commit.interval.ms": consumer_defaults.get(
-                    "auto.commit.interval.ms", 5000
-                ),
-                # Add bootstrap.servers here for clarity
-                "bootstrap.servers": bootstrap_servers,
-                # Error callback
-                "error_cb": self._kafka_error_callback,
+                # Add other consumer topics here if needed
             }
 
             logger.info("Initializing Kafka consumers...")
             for topic, group_id in topic_group_map.items():
-                # Allow overriding defaults per consumer if needed in config, otherwise use base
-                consumer_conf_final = base_consumer_conf.copy()
-                consumer_conf_final["group.id"] = group_id  # Group ID is essential
+                # Prepare kwargs for KafkaConsumerWrapper constructor
+                consumer_kwargs = {
+                    "bootstrap_servers": bootstrap_servers,
+                    "group_id": group_id,
+                    # Map keys from YAML (or defaults) to KafkaConsumerWrapper args
+                    "auto_offset_reset": consumer_defaults.get(
+                        "auto_offset_reset", "earliest"
+                    ),
+                    "enable_auto_commit": consumer_defaults.get(
+                        "enable_auto_commit", True
+                    ),
+                    "auto_commit_interval_ms": consumer_defaults.get(  # Passed via **kwargs
+                        "auto_commit_interval_ms", 5000
+                    ),
+                    "fetch_max_wait_ms": consumer_defaults.get(
+                        "fetch_max_wait_ms", 500
+                    ),
+                    "max_poll_interval_ms": consumer_defaults.get(
+                        "max_poll_interval_ms", 300000
+                    ),
+                    "session_timeout_ms": consumer_defaults.get(
+                        "session_timeout_ms", 10000
+                    ),
+                    # Add other relevant consumer settings from config if needed
+                    # e.g., 'client_id', 'api_version', security settings
+                    # "security_protocol": consumer_defaults.get("security_protocol"),
+                    # ...
+                    "consumer_timeout_ms": 1000,  # Keep the explicit timeout for the consume loop
+                }
+                # Remove None values to avoid overriding kafka-python defaults unintentionally
+                consumer_kwargs = {
+                    k: v for k, v in consumer_kwargs.items() if v is not None
+                }
 
-                self.consumers[topic] = KafkaConsumerWrapper(
-                    topics=[topic],
-                    # Pass the full config dict
-                    config=consumer_conf_final,
-                    consumer_timeout_ms=1000,  # Keep timeout for polling loop
-                )
-                logger.info(
-                    f"Initialized consumer for topic '{topic}' with group '{group_id}'"
-                )
+                logger.debug(f"Consumer args for topic '{topic}': {consumer_kwargs}")
 
-            # Define output topics mapping
+                try:
+                    self.consumers[topic] = KafkaConsumerWrapper(
+                        topics=[topic],
+                        **consumer_kwargs,  # Unpack the prepared arguments
+                    )
+                    logger.info(
+                        f"Initialized consumer for topic '{topic}' with group '{group_id}'"
+                    )
+                except Exception:
+                    logger.exception(
+                        f"Failed to initialize consumer for topic '{topic}'"
+                    )
+                    # Decide if failure is critical: raise e or continue?
+                    raise  # Re-raise to stop service initialization on consumer failure
+
+            # --- Producer Setup ---
+            # Get defaults from the 'producer' section of the config
+            producer_defaults = self.kafka_config.get("producer", {})
+            logger.debug(f"Loaded producer defaults: {producer_defaults}")
+
+            # Define output topics mapping (remains the same)
             self.output_topic_map = {
                 "validated_posts": topics_config["social_media_reddit_validated"],
                 "validated_comments": topics_config[
@@ -136,35 +164,56 @@ class RedditValidationService:  # Renamed class
                 "error": topics_config["social_media_reddit_error"],
             }
 
-            # Producer configuration defaults
-            producer_defaults = self.kafka_config.get("producer_defaults", {})
-            base_producer_conf = {
-                "bootstrap.servers": bootstrap_servers,
-                "acks": producer_defaults.get("acks", "all"),
+            # Prepare base producer kwargs
+            # Map keys from YAML (or defaults) to KafkaProducerWrapper args
+            base_producer_kwargs = {
+                "bootstrap_servers": bootstrap_servers,
+                "acks": producer_defaults.get(
+                    "acks", 1
+                ),  # Default to 1 if not specified
                 "retries": producer_defaults.get("retries", 3),
-                "batch.size": producer_defaults.get("batch.size", 16384),
-                "linger.ms": producer_defaults.get("linger.ms", 5),
-                "buffer.memory": producer_defaults.get("buffer.memory", 33554432),
-                # Error callback
-                "error_cb": self._kafka_error_callback,
+                # Pass other settings via kwargs to KafkaProducerWrapper
+                "linger_ms": producer_defaults.get("linger_ms", 5),
+                "batch_size": producer_defaults.get("batch_size", 16384),
+                "buffer_memory": producer_defaults.get("buffer_memory", 33554432),
+                # Add other relevant producer settings from config if needed
+                # e.g., 'client_id', 'compression_type', security settings
+                "compression_type": producer_defaults.get("compression_type"),
+                # "security_protocol": producer_defaults.get("security_protocol"),
+                # ...
+            }
+            # Remove None values
+            base_producer_kwargs = {
+                k: v for k, v in base_producer_kwargs.items() if v is not None
             }
 
             logger.info("Initializing Kafka producers...")
-            for key, topic_name in self.output_topic_map.items():
-                # Allow overriding defaults per producer if needed in config
-                producer_conf_final = base_producer_conf.copy()
+            # All producers share the same config in this setup
+            # If different configs per output topic were needed, this logic would change.
+            shared_producer_kwargs = base_producer_kwargs.copy()
+            logger.debug(f"Shared producer args: {shared_producer_kwargs}")
 
-                self.producers[key] = KafkaProducerWrapper(
-                    # Pass the full config dict
-                    config=producer_conf_final
-                )
-                logger.info(
-                    f"Initialized producer for key '{key}' (Topic: '{topic_name}')"
-                )
+            try:
+                # Create one producer instance shared by all outputs (typical use case)
+                # We map logical keys ('validated_posts', etc.) to this single producer instance.
+                shared_producer = KafkaProducerWrapper(**shared_producer_kwargs)
+                logger.info("Initialized shared Kafka producer.")
+
+                for key in self.output_topic_map.keys():
+                    self.producers[key] = (
+                        shared_producer  # All keys point to the same producer
+                    )
+                    logger.info(
+                        f"Mapped producer key '{key}' (Topic: '{self.output_topic_map[key]}') to shared producer instance."
+                    )
+
+            except Exception:
+                logger.exception("Failed to initialize shared Kafka producer.")
+                raise  # Re-raise to stop service initialization
 
         except KeyError as e:
             logger.exception(
-                f"Configuration key error during Kafka client setup: Missing key {e} in kafka_config: {self.kafka_config}"
+                f"Configuration key error during Kafka client setup: Missing key {e} in config: {self.kafka_config}"
             )
             raise ValueError(f"Missing required Kafka configuration key: {e}")
         except Exception as e:
@@ -172,16 +221,24 @@ class RedditValidationService:  # Renamed class
             raise
 
     def _kafka_error_callback(self, err: KafkaException):
-        """Callback for Kafka client errors (consumers/producers)."""
-        if err.code() == KafkaException._PARTITION_EOF:
-            # INFO or DEBUG level is appropriate for EOF
+        """Callback for Kafka client errors (consumers/producers). NOTE: This is likely unused with kafka-python."""
+        # This method was likely for confluent-kafka's error_cb.
+        # kafka-python typically raises exceptions or logs internally.
+        # Keep the method signature for now, but be aware it might not be called.
+        logger.warning(
+            f"Kafka Error Callback Invoked (may be unused with kafka-python): {err}"
+        )
+        if (
+            hasattr(err, "code") and err.code() == KafkaException._PARTITION_EOF
+        ):  # Check if it looks like confluent error obj
             logger.info(f"Reached end of partition: {err}")
-        elif err.fatal():
-            logger.error(f"FATAL Kafka Error: {err}. Stopping service.")
-            # Trigger graceful shutdown on fatal errors
+        elif hasattr(err, "fatal") and err.fatal():
+            logger.error(
+                f"FATAL Kafka Error reported to callback: {err}. Stopping service."
+            )
             self.stop()
         else:
-            logger.warning(f"Non-fatal Kafka Error: {err}")
+            logger.warning(f"Non-fatal Kafka Error reported to callback: {err}")
 
     def _determine_target_producer(
         self, validated_model: ValidatedRedditItem, source_topic: str
