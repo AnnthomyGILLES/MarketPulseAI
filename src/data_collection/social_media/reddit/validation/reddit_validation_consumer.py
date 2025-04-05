@@ -4,9 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from confluent_kafka import (
-    KafkaException,
-)
+from confluent_kafka import KafkaException
 from loguru import logger
 
 from src.common.messaging.kafka_consumer import KafkaConsumerWrapper
@@ -36,11 +34,9 @@ class RedditValidationConsumer:
         self.config_path = Path(config_path or self.DEFAULT_CONFIG_PATH)
         logger.info(f"Loading Kafka configuration from: {self.config_path}")
         try:
-            self.config = load_config(self.config_path)
-            if "kafka" not in self.config or "topics" not in self.config["kafka"]:
-                raise ValueError(
-                    "Kafka configuration missing 'kafka' or 'kafka.topics' section."
-                )
+            self.config = load_config(str(self.config_path))
+            if "topics" not in self.config:
+                raise ValueError("Kafka configuration missing 'topics' section.")
         except Exception as e:
             logger.exception(
                 f"Failed to load Kafka configuration from {self.config_path}: {e}"
@@ -49,7 +45,6 @@ class RedditValidationConsumer:
 
         self.validator = validate_reddit_data
         self.running = False
-
         self._setup_kafka_clients()
 
         # Statistics
@@ -58,9 +53,7 @@ class RedditValidationConsumer:
         self.invalid_count = 0
         self.error_count = 0
         self.last_stats_time = time.time()
-        self.stats_interval = self.config.get("kafka", {}).get(
-            "consumer_stats_interval_seconds", 60
-        )
+        self.stats_interval = 60  # Default to 60 seconds
 
         # Signal handling for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_signal)
@@ -72,55 +65,79 @@ class RedditValidationConsumer:
         self.producers: Dict[str, KafkaProducerWrapper] = {}
 
         try:
-            bootstrap_servers = self.config["kafka"]["bootstrap_servers_dev"]
+            bootstrap_servers = self.config["bootstrap_servers"]
 
             # Define input topics and map to consumer groups
             topic_group_map = {
-                self.config["kafka"]["topics"]["social_media_reddit_raw"]: self.config[
-                    "kafka"
-                ]["consumer_groups"]["reddit_validation"],
-                self.config["kafka"]["topics"][
-                    "social_media_reddit_comments"
-                ]: self.config["kafka"]["consumer_groups"][
-                    "reddit_comments_validation"
-                ],
-                self.config["kafka"]["topics"][
-                    "social_media_reddit_symbols"
-                ]: self.config["kafka"]["consumer_groups"]["reddit_symbols_validation"],
+                self.config["topics"]["social_media_reddit_raw"]: self.config[
+                    "consumer_groups"
+                ]["reddit_validation"],
+                self.config["topics"]["social_media_reddit_comments"]: self.config[
+                    "consumer_groups"
+                ]["reddit_comments_validation"],
+                self.config["topics"]["social_media_reddit_symbols"]: self.config[
+                    "consumer_groups"
+                ]["reddit_symbols_validation"],
             }
+
+            # Consumer configuration
+            consumer_config = self.config.get("consumer", {})
 
             logger.info("Initializing Kafka consumers...")
             for topic, group_id in topic_group_map.items():
+                consumer_conf = {
+                    "auto_offset_reset": consumer_config.get(
+                        "auto_offset_reset", "earliest"
+                    ),
+                    "enable_auto_commit": consumer_config.get(
+                        "enable_auto_commit", True
+                    ),
+                    "auto_commit_interval_ms": consumer_config.get(
+                        "auto_commit_interval_ms", 5000
+                    ),
+                }
+
                 self.consumers[topic] = KafkaConsumerWrapper(
                     topics=[topic],
                     bootstrap_servers=bootstrap_servers,
                     group_id=group_id,
                     consumer_timeout_ms=1000,
+                    **consumer_conf,
                 )
                 logger.info(
                     f"Initialized consumer for topic '{topic}' with group '{group_id}'"
                 )
 
+            # Define output topics mapping
             output_topics = {
-                "validated_posts": self.config["kafka"]["topics"][
+                "validated_posts": self.config["topics"][
                     "social_media_reddit_validated"
                 ],
-                "validated_comments": self.config["kafka"]["topics"][
+                "validated_comments": self.config["topics"][
                     "social_media_reddit_comments_validated"
                 ],
-                "validated_symbols": self.config["kafka"]["topics"][
+                "validated_symbols": self.config["topics"][
                     "social_media_reddit_symbols_validated"
                 ],
-                "invalid": self.config["kafka"]["topics"][
-                    "social_media_reddit_invalid"
-                ],
-                "error": self.config["kafka"]["topics"]["social_media_reddit_error"],
+                "invalid": self.config["topics"]["social_media_reddit_invalid"],
+                "error": self.config["topics"]["social_media_reddit_error"],
             }
+
+            # Producer configuration
+            producer_config = self.config.get("producer", {})
 
             logger.info("Initializing Kafka producers...")
             for key, topic_name in output_topics.items():
+                producer_conf = {
+                    "acks": producer_config.get("acks", "all"),
+                    "retries": producer_config.get("retries", 3),
+                    "batch_size": producer_config.get("batch_size", 16384),
+                    "linger_ms": producer_config.get("linger_ms", 5),
+                    "buffer_memory": producer_config.get("buffer_memory", 33554432),
+                }
+
                 self.producers[key] = KafkaProducerWrapper(
-                    bootstrap_servers=bootstrap_servers,
+                    bootstrap_servers=bootstrap_servers, **producer_conf
                 )
                 logger.info(
                     f"Initialized producer for topic key '{key}' ({topic_name})"
@@ -192,19 +209,15 @@ class RedditValidationConsumer:
                 validated_data_dict = validated_model.model_dump()
 
                 target_producer_key = None
-                if (
-                    source_topic
-                    == self.config["kafka"]["topics"]["social_media_reddit_raw"]
-                ):
+                if source_topic == self.config["topics"]["social_media_reddit_raw"]:
                     target_producer_key = "validated_posts"
                 elif (
                     source_topic
-                    == self.config["kafka"]["topics"]["social_media_reddit_comments"]
+                    == self.config["topics"]["social_media_reddit_comments"]
                 ):
                     target_producer_key = "validated_comments"
                 elif (
-                    source_topic
-                    == self.config["kafka"]["topics"]["social_media_reddit_symbols"]
+                    source_topic == self.config["topics"]["social_media_reddit_symbols"]
                     or validated_model.detected_symbols
                 ):
                     target_producer_key = "validated_symbols"
@@ -219,13 +232,13 @@ class RedditValidationConsumer:
 
                 if target_producer_key and target_producer_key in self.producers:
                     topic_mapping = {
-                        "validated_posts": self.config["kafka"]["topics"][
+                        "validated_posts": self.config["topics"][
                             "social_media_reddit_validated"
                         ],
-                        "validated_comments": self.config["kafka"]["topics"][
+                        "validated_comments": self.config["topics"][
                             "social_media_reddit_comments_validated"
                         ],
-                        "validated_symbols": self.config["kafka"]["topics"][
+                        "validated_symbols": self.config["topics"][
                             "social_media_reddit_symbols_validated"
                         ],
                     }
@@ -280,9 +293,7 @@ class RedditValidationConsumer:
                     .replace("+00:00", "Z"),
                 }
                 if "invalid" in self.producers:
-                    invalid_topic = self.config["kafka"]["topics"][
-                        "social_media_reddit_invalid"
-                    ]
+                    invalid_topic = self.config["topics"]["social_media_reddit_invalid"]
                     self.producers["invalid"].send_message(
                         topic=invalid_topic,
                         value=invalid_data,
@@ -321,7 +332,7 @@ class RedditValidationConsumer:
                 .isoformat()
                 .replace("+00:00", "Z"),
             }
-            error_topic = self.config["kafka"]["topics"]["social_media_reddit_error"]
+            error_topic = self.config["topics"]["social_media_reddit_error"]
             success = self.producers["error"].send_message(
                 topic=error_topic,
                 value=error_data,
