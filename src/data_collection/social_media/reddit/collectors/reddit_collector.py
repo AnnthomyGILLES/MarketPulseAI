@@ -4,7 +4,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime
+import pendulum
 from pathlib import Path
 from typing import List, Optional, Set
 
@@ -389,10 +389,9 @@ class RedditCollector(BaseCollector):
                 "title": post.title,
                 "author": str(post.author) if post.author else "[deleted]",
                 "created_utc": post.created_utc,
-                "post_created_datetime": datetime.fromtimestamp(
-                    post.created_utc
-                ).isoformat()
-                + "Z",
+                "post_created_datetime": pendulum.from_timestamp(
+                    post.created_utc, tz="UTC"
+                ).to_iso8601_string(),
                 "score": post.score,
                 "upvote_ratio": post.upvote_ratio,
                 "num_comments": post.num_comments,
@@ -401,7 +400,7 @@ class RedditCollector(BaseCollector):
                 "is_self": post.is_self,
                 "permalink": f"https://www.reddit.com{post.permalink}",
                 "collection_method": collection_method,
-                "collection_timestamp": datetime.now().isoformat() + "Z",
+                "collection_timestamp": pendulum.now("UTC").to_iso8601_string(),
             }
 
             detected_symbols = self._extract_symbols(post.title + " " + post.selftext)
@@ -526,15 +525,14 @@ class RedditCollector(BaseCollector):
                     "body": comment.body,
                     "author": str(comment.author) if comment.author else "[deleted]",
                     "created_utc": comment.created_utc,
-                    "comment_created_datetime": datetime.fromtimestamp(
-                        comment.created_utc
-                    ).isoformat()
-                    + "Z",
+                    "comment_created_datetime": pendulum.from_timestamp(
+                        comment.created_utc, tz="UTC"
+                    ).to_iso8601_string(),
                     "score": comment.score,
                     "parent_id": comment.parent_id,
                     "is_submitter": comment.is_submitter,
                     "permalink": f"https://www.reddit.com{comment.permalink}",
-                    "collection_timestamp": datetime.now().isoformat() + "Z",
+                    "collection_timestamp": pendulum.now("UTC").to_iso8601_string(),
                 }
 
                 detected_symbols = self._extract_symbols(comment.body)
