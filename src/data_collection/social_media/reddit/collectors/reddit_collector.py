@@ -494,6 +494,7 @@ class RedditCollector(BaseCollector):
         except Exception as e:
             logger.exception(f"Unexpected error during symbol extraction: {e}")
 
+        logger.debug(f"Extracted symbols from text: {detected}")
         return detected
 
     def collect_comments(self, post_id: str, limit: Optional[int] = None):
@@ -671,10 +672,13 @@ class RedditCollector(BaseCollector):
                 sleep_time = max(0, self.collection_interval - elapsed_time)
                 logger.info(f"Sleeping for {sleep_time:.2f} seconds...")
                 sleep_end = time.time() + sleep_time
-                # TODO: Remove break and uncomment loop for production
-                break  # Keep break for testing/dev
-                # while self.running and time.time() < sleep_end:
-                #     time.sleep(1)
+
+                # Remove this break statement to allow multiple collection cycles
+                # break  # Keep break for testing/dev
+
+                # Uncomment the following loop for production use
+                while self.running and time.time() < sleep_end:
+                    time.sleep(1)
 
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received. Stopping collector.")
