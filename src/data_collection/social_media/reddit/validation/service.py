@@ -697,7 +697,6 @@ class RedditValidationService(BaseValidationService):
                     if not self.running:
                         break
 
-                # If no messages were processed across all consumers in a cycle, sleep a bit longer
                 if not message_processed_in_cycle and self.running:
                     logger.debug(
                         f"No messages consumed in this cycle across {len(self.consumers)} topics. Sleeping..."
