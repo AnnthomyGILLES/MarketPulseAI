@@ -3,7 +3,7 @@ import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from confluent_kafka import KafkaException
 from loguru import logger
@@ -19,15 +19,28 @@ from src.data_collection.social_media.reddit.validation.validator import (
     RedditDataValidator,
 )  # Updated import
 from src.utils.config import load_config
+from src.common.validation import BaseValidationService
 
 
-class RedditValidationService:  # Renamed class
+# Inherit from BaseValidationService
+class RedditValidationService(BaseValidationService):
     """
     Kafka consumer service for validating and enriching Reddit data.
 
     Consumes from raw Reddit topics, validates using the RedditDataValidator,
     and produces results to downstream topics (validated, invalid, error).
     """
+
+    # Define default topic keys (can be overridden by kafka_config.yaml)
+    # Assuming these are the keys used in the config file
+    DEFAULT_INPUT_TOPICS = ["social_media_reddit_posts", "social_media_reddit_comments"]
+    DEFAULT_CONSUMER_GROUP = "reddit_validation" # Default group name if multiple sources feed validation
+    DEFAULT_VALID_TOPIC = "social_media_reddit_validated" # Combined validated topic? Or separate? Assuming combined for now.
+    DEFAULT_VALID_POST_TOPIC = "social_media_reddit_validated" # Let's keep the specific ones for flexibility in base class logic if needed later
+    DEFAULT_VALID_COMMENT_TOPIC = "social_media_reddit_comments_validated"
+    DEFAULT_VALID_SYMBOL_TOPIC = "social_media_reddit_symbols_validated"
+    DEFAULT_INVALID_TOPIC = "social_media_reddit_invalid"
+    DEFAULT_ERROR_TOPIC = "social_media_reddit_error"
 
     DEFAULT_CONFIG_PATH = (
         Path(__file__).resolve().parents[5] / "config" / "kafka" / "kafka_config.yaml"
@@ -65,6 +78,40 @@ class RedditValidationService:  # Renamed class
         signal.signal(signal.SIGINT, self._handle_signal)
         signal.signal(signal.SIGTERM, self._handle_signal)
         logger.info("RedditValidationService initialized successfully.")
+
+        # Define Kafka topic keys for the base class constructor
+        # These keys should exist in the kafka_config.yaml file under 'topics' and 'consumer_groups'
+        input_topics = self.DEFAULT_INPUT_TOPICS # List of keys
+        consumer_group = self.DEFAULT_CONSUMER_GROUP # Key for the group name
+
+        # For Reddit, the "valid" destination depends on the content type AND if symbols are detected.
+        # The base class currently assumes a single 'valid' topic key.
+        # We need to override the process_message or add logic to handle multiple valid topics.
+        # Let's start by providing the main validated topic key, and override message processing.
+        # Option 1: Provide one key, override process_message (Chosen for now)
+        valid_topic = self.DEFAULT_VALID_TOPIC
+        # Option 2: Pass multiple valid topic keys and modify base class (More complex)
+
+        invalid_topic = self.DEFAULT_INVALID_TOPIC
+        error_topic = self.DEFAULT_ERROR_TOPIC
+
+        # Call the base class __init__
+        super().__init__(
+            service_name="RedditValidationService",
+            validator=self.validator,
+            input_topics_config_keys=input_topics,
+            consumer_group_config_key=consumer_group,
+            valid_topic_config_key=valid_topic, # Will need custom routing logic
+            invalid_topic_config_key=invalid_topic,
+            error_topic_config_key=error_topic,
+            config_path=self.config_path,
+        )
+
+        # Store the specific topic keys needed for custom routing
+        # These are fetched from the loaded kafka_config by the base class
+        self.post_topic = self.kafka_config["topics"].get(self.DEFAULT_VALID_POST_TOPIC, self.valid_topic)
+        self.comment_topic = self.kafka_config["topics"].get(self.DEFAULT_VALID_COMMENT_TOPIC, self.valid_topic)
+        self.symbol_topic = self.kafka_config["topics"].get(self.DEFAULT_VALID_SYMBOL_TOPIC, self.valid_topic)
 
     def _setup_kafka_clients(self):
         """Initializes Kafka consumers and producers based on config."""
@@ -298,11 +345,10 @@ class RedditValidationService:  # Renamed class
             logger.error(
                 f"Received non-dictionary message value | Type: {type(message_value)} | Context: {log_context}"
             )
-            self._send_to_error_topic(
-                raw_message,
-                "invalid_message_format",
-                "Message value is not a dictionary",
-                log_context,
+            self._send_to_producer(
+                self.error_producer, self.error_topic,
+                {"original_payload": message_value, "error": "Message value is not a dictionary", "context": log_context},
+                f"error_{message_key or 'unknown'}_{time.time_ns()}", log_context, "error"
             )
             self.error_count += 1
             return
@@ -336,11 +382,10 @@ class RedditValidationService:  # Renamed class
                         logger.error(
                             f"Configuration error: No topic found for producer key '{target_producer_key}' | Context: {log_context}"
                         )
-                        self._send_to_error_topic(
-                            message_value,
-                            "config_error",
-                            f"No output topic for producer key {target_producer_key}",
-                            log_context,
+                        self._send_to_producer(
+                            self.error_producer, self.error_topic,
+                            {"original_payload": validated_model, "error": f"No output topic for producer key {target_producer_key}", "context": log_context},
+                            f"error_{item_id}", log_context, "error"
                         )
                         self.error_count += 1
                         return  # Stop processing this message
@@ -359,13 +404,12 @@ class RedditValidationService:  # Renamed class
                         f"Sending data: {validated_data_dict} | Context: {log_context}"
                     )
 
-                    success = self.producers[target_producer_key].send_message(
-                        topic=target_topic,
-                        value=validated_data_dict,
-                        key=f"validated_{item_id}",  # Maintain key structure
+                    send_success = self._send_to_producer(
+                        self.valid_producer, target_topic,
+                        validated_data_dict, f"validated_{item_id}", log_context, f"validated_{target_producer_key}"
                     )
 
-                    if success:
+                    if send_success:
                         logger.info(
                             f"Successfully queued validated message | Context: {log_context}"
                         )
@@ -376,11 +420,10 @@ class RedditValidationService:  # Renamed class
                         )
                         # If send_message returns False, it usually means an immediate error (e.g., buffer full, serialization issue)
                         # Consider if sending to error topic is appropriate or if relying on producer's error_cb is enough
-                        self._send_to_error_topic(
-                            validated_data_dict,  # Send the data that failed
-                            "producer_queue_failure",
-                            f"send_message returned false for {target_producer_key}",
-                            log_context,
+                        self._send_to_producer(
+                            self.error_producer, self.error_topic,
+                            {"original_payload": validated_data_dict, "error": "send_message returned false", "context": log_context},
+                            f"error_{item_id}", log_context, "error"
                         )
                         self.error_count += 1
 
@@ -388,13 +431,10 @@ class RedditValidationService:  # Renamed class
                     logger.error(
                         f"No valid producer found or configured for key '{target_producer_key}' | Context: {log_context}"
                     )
-                    self._send_to_error_topic(
-                        validated_model.model_dump(
-                            mode="json"
-                        ),  # Send the data that had no producer
-                        "producer_not_found",
-                        f"No producer for key '{target_producer_key}'",
-                        log_context,
+                    self._send_to_producer(
+                        self.error_producer, self.error_topic,
+                        {"original_payload": validated_model, "error": f"No producer for key '{target_producer_key}'", "context": log_context},
+                        f"error_{item_id}", log_context, "error"
                     )
                     self.error_count += 1
 
@@ -421,21 +461,19 @@ class RedditValidationService:  # Renamed class
                     logger.info(
                         f"Attempting to send invalid message | Context: {log_context}"
                     )
-                    self.producers["invalid"].send_message(
-                        topic=invalid_topic,
-                        value=invalid_data,
-                        key=f"invalid_{item_id}",
-                    )  # Assuming success is handled by producer logs/callbacks for non-critical invalid topic
+                    self._send_to_producer(
+                        self.invalid_producer, invalid_topic,
+                        invalid_data, f"invalid_{item_id}", log_context, "invalid"
+                    )
                 else:
                     logger.error(
                         "Producer for 'invalid' topic not found. Cannot send invalid message."
                     )
                     # Potentially send to error topic if invalid topic is essential?
-                    self._send_to_error_topic(
-                        invalid_data,
-                        "invalid_producer_missing",
-                        "Producer for invalid topic not configured",
-                        log_context,
+                    self._send_to_producer(
+                        self.error_producer, self.error_topic,
+                        {"original_payload": invalid_data, "error": "Producer for invalid topic not configured", "context": log_context},
+                        f"error_{item_id}", log_context, "error"
                     )
                     self.error_count += 1  # Count as error if invalid topic missing
 
@@ -445,8 +483,10 @@ class RedditValidationService:  # Renamed class
                 f"CRITICAL UNEXPECTED error during message processing | Error: {e} | Context: {log_context}"
             )
             # Send the original raw value if possible
-            self._send_to_error_topic(
-                message_value, type(e).__name__, traceback.format_exc(), log_context
+            self._send_to_producer(
+                self.error_producer, self.error_topic,
+                {"original_message": message_value, "error": str(e), "traceback": traceback.format_exc(), "context": log_context},
+                f"error_{item_id}", log_context, "error"
             )
         finally:
             self._report_stats()  # Report stats periodically
@@ -476,10 +516,9 @@ class RedditValidationService:  # Renamed class
             }
 
             logger.info(f"Attempting to send error message | Context: {context}")
-            success = self.producers["error"].send_message(
-                topic=error_topic,
-                value=error_data,
-                key=f"error_{context.get('topic', 'unknown')}_{time.time_ns()}",
+            success = self._send_to_producer(
+                self.error_producer, error_topic,
+                error_data, f"error_{context.get('topic', 'unknown')}_{time.time_ns()}", context, "error"
             )
             if not success:
                 # This is critical - we failed to report an error
@@ -659,6 +698,17 @@ class RedditValidationService:  # Renamed class
             logger.warning(
                 f"Received signal {signal.Signals(signum).name}, but service already stopping."
             )
+
+    def _get_message_key(self, data: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Extracts the 'id' field from the raw message."""
+        if isinstance(data, dict):
+            return data.get("id")
+        return None
+
+    def _get_validated_message_key(self, validated_data: ValidatedRedditItem) -> Optional[str]:
+        """Extracts the 'id' field from the validated Pydantic model."""
+        # validated_data is the Pydantic model (RedditPost or RedditComment)
+        return validated_data.id
 
 
 if __name__ == "__main__":
