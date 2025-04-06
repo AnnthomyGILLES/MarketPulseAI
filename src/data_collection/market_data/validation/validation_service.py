@@ -1,186 +1,88 @@
 # src/data_collection/market_data/validation/validation_service.py
 
-import time
-import traceback
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
-from loguru import logger
-
-from src.common.messaging.kafka_consumer import KafkaConsumerWrapper
-from src.common.messaging.kafka_producer import KafkaProducerWrapper
+# Import BaseValidationService and MarketDataValidator
+from src.common.validation import BaseValidationService
 from src.data_collection.market_data.validation.market_data_validator import (
     MarketDataValidator,
 )
-from src.utils.config import load_config
+
+# Removed imports handled by base class: time, traceback, KafkaConsumerWrapper, KafkaProducerWrapper, load_config, logger (base class configures it)
 
 
-class MarketDataValidationService:
+# Inherit from BaseValidationService
+class MarketDataValidationService(BaseValidationService):
     """
-    Service that consumes raw market data from Kafka, validates it,
-    and produces validated data to another Kafka topic.
-
-    Invalid data is sent to an error topic for monitoring and analysis.
+    Service that consumes raw market data from Kafka, validates it using MarketDataValidator,
+    and produces results to downstream Kafka topics. Inherits from BaseValidationService.
     """
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: Optional[str] = None):
         """
-        Initialize the validation service.
+        Initialize the validation service using the base class constructor.
 
         Args:
-            config_path: Path to Kafka configuration file
+            config_path: Optional path to the Kafka configuration file.
         """
-        # Set default config path if not provided
-        if config_path is None:
-            base_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
-            config_path = str(base_dir / "config" / "kafka" / "kafka_config.yaml")
+        # Define Kafka topic keys based on the existing service's usage
+        # The original service sent both invalid and error data to 'market_data_error'.
+        # We map both invalid_topic_config_key and error_topic_config_key to it.
+        # If separate topics are desired later, the kafka_config.yaml can be updated.
+        input_topics = ["market_data_raw"]
+        consumer_group = "market_data_validation"
+        valid_topic = "market_data_validated"
+        invalid_output_topic = "market_data_error" # Where failed validations go
+        error_output_topic = "market_data_error"   # Where processing errors go
 
-        # Configure loguru logger
-        logger.add(
-            "logs/market_data_validation_{time}.log",
-            rotation="100 MB",
-            retention="30 days",
-            level="INFO",
-            format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} | {message}",
+        # Instantiate the specific validator
+        validator = MarketDataValidator()
+
+        # Call the base class __init__
+        super().__init__(
+            service_name="MarketDataValidationService",
+            validator=validator,
+            input_topics_config_keys=input_topics,
+            consumer_group_config_key=consumer_group,
+            valid_topic_config_key=valid_topic,
+            invalid_topic_config_key=invalid_output_topic,
+            error_topic_config_key=error_output_topic,
+            config_path=config_path,
         )
 
-        # Load configuration
-        self.config = load_config(config_path)
+    def _get_message_key(self, data: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Extracts the 'symbol' as the message key if available."""
+        if isinstance(data, dict):
+            return data.get("symbol")
+        return None
 
-        # Initialize validator
-        self.validator = MarketDataValidator()
+    def _get_validated_message_key(self, validated_data: Dict[str, Any]) -> Optional[str]:
+        """Extracts the 'symbol' from the validated data dictionary as the key."""
+        # validated_data is the dict returned by MarketDataValidator on success
+        return validated_data.get("symbol")
 
-        # Initialize Kafka consumer and producers
-        bootstrap_servers = self.config["kafka"]["bootstrap_servers"]
-        input_topic = self.config["kafka"]["topics"]["market_data_raw"]
-
-        logger.info(f"Creating Kafka consumer for topic: {input_topic}")
-        self.consumer = KafkaConsumerWrapper(
-            bootstrap_servers=bootstrap_servers,
-            topic=input_topic,
-            group_id=self.config["kafka"]["consumer_groups"]["market_data_validation"],
-        )
-
-        self.valid_producer = KafkaProducerWrapper(
-            bootstrap_servers=bootstrap_servers,
-            topic=self.config["kafka"]["topics"]["market_data_validated"],
-        )
-
-        self.error_producer = KafkaProducerWrapper(
-            bootstrap_servers=bootstrap_servers,
-            topic=self.config["kafka"]["topics"]["market_data_error"],
-        )
-
-        # Keep track of processed records for statistics
-        self.stats = {
-            "processed": 0,
-            "valid": 0,
-            "invalid": 0,
-            "last_report_time": time.time(),
-        }
-
-        self.running = False
-
-    def _update_and_report_stats(self, is_valid: bool) -> None:
-        """
-        Update processing statistics and periodically log them.
-
-        Args:
-            is_valid: Whether the processed record was valid
-        """
-        self.stats["processed"] += 1
-        if is_valid:
-            self.stats["valid"] += 1
-        else:
-            self.stats["invalid"] += 1
-
-        # Report stats every 1000 records or 60 seconds
-        current_time = time.time()
-        if (
-            self.stats["processed"] % 1000 == 0
-            or current_time - self.stats["last_report_time"] > 60
-        ):
-            logger.info(
-                f"Processing stats: Processed={self.stats['processed']}, "
-                f"Valid={self.stats['valid']} "
-                f"({self.stats['valid'] / self.stats['processed'] * 100:.1f}%), "
-                f"Invalid={self.stats['invalid']}"
-            )
-            self.stats["last_report_time"] = current_time
-
-    def process_message(self, message: Dict[str, Any]) -> None:
-        """
-        Process and validate a single message from Kafka.
-
-        Args:
-            message: Dictionary containing market data
-        """
-        is_valid, validated_data, errors = self.validator.validate(message)
-
-        if is_valid:
-            # Send valid data to the validated topic
-            self.valid_producer.send_message(validated_data)
-        else:
-            # Add error information to the data
-            error_data = message.copy()
-            error_data["validation_errors"] = errors
-            error_data["validation_timestamp"] = time.time()
-
-            # Send invalid data to the error topic
-            self.error_producer.send_message(error_data)
-
-        # Update statistics
-        self._update_and_report_stats(is_valid)
-
-    def run(self) -> None:
-        """
-        Run the validation service, continuously consuming and validating market data.
-        """
-        self.running = True
-        logger.info("Starting market data validation service")
-
-        try:
-            for message in self.consumer.consume():
-                if not self.running:
-                    break
-
-                try:
-                    # Process the message from the value field
-                    self.process_message(message["value"])
-                except Exception as e:
-                    logger.error(f"Error processing message: {str(e)}")
-                    logger.error(traceback.format_exc())
-
-        except KeyboardInterrupt:
-            logger.info("Validation service stopped by user")
-        except Exception as e:
-            logger.error(f"Validation service failed: {str(e)}")
-            logger.error(traceback.format_exc())
-        finally:
-            self.stop()
-
-    def stop(self) -> None:
-        """Stop the validation service and clean up resources."""
-        self.running = False
-        logger.info("Stopping market data validation service")
-
-        # Close Kafka connections
-        try:
-            self.consumer.close()
-            self.valid_producer.close()
-            self.error_producer.close()
-            logger.info("Closed Kafka connections")
-        except Exception as e:
-            logger.error(f"Error closing Kafka connections: {str(e)}")
+    # Methods removed as they are handled by BaseValidationService:
+    # - _setup_kafka_clients
+    # - _kafka_error_callback (using base implementation)
+    # - _update_and_report_stats / _report_stats
+    # - process_message
+    # - run
+    # - stop
+    # - _handle_signal
+    # - _setup_logging
 
 
 if __name__ == "__main__":
-    # Create and run the validation service
-    validation_service = MarketDataValidationService()
+    # Use the base class's run_service method for standalone execution
+    # This automatically handles initialization and the run loop.
+    # It assumes the config file is in the default location or specified via an arg parser (not implemented here)
+    MarketDataValidationService.run_service()
 
-    try:
-        validation_service.run()
-    except KeyboardInterrupt:
-        print("Service interrupted. Shutting down...")
-    finally:
-        validation_service.stop()
+    # The old way:
+    # validation_service = MarketDataValidationService()
+    # try:
+    #     validation_service.run()
+    # except KeyboardInterrupt:
+    #     print("Service interrupted by user. Shutting down...")
+    # # Base class handles stop in its finally block
