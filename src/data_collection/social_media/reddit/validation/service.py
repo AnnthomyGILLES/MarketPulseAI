@@ -234,26 +234,6 @@ class RedditValidationService(BaseValidationService):
             logger.exception(f"Failed to initialize Kafka clients: {e}")
             raise
 
-    def _kafka_error_callback(self, err: KafkaException):
-        """Callback for Kafka client errors (consumers/producers). NOTE: This is likely unused with kafka-python."""
-        # This method was likely for confluent-kafka's error_cb.
-        # kafka-python typically raises exceptions or logs internally.
-        # Keep the method signature for now, but be aware it might not be called.
-        logger.warning(
-            f"Kafka Error Callback Invoked (may be unused with kafka-python): {err}"
-        )
-        if (
-            hasattr(err, "code") and err.code() == KafkaException._PARTITION_EOF
-        ):  # Check if it looks like confluent error obj
-            logger.info(f"Reached end of partition: {err}")
-        elif hasattr(err, "fatal") and err.fatal():
-            logger.error(
-                f"FATAL Kafka Error reported to callback: {err}. Stopping service."
-            )
-            self.stop()
-        else:
-            logger.warning(f"Non-fatal Kafka Error reported to callback: {err}")
-
     def _determine_target_producer(
         self, validated_model: ValidatedRedditItem, source_topic: str
     ) -> Optional[str]:
@@ -682,7 +662,6 @@ class RedditValidationService(BaseValidationService):
                         logger.error(
                             f"KafkaException during consumption from topic {topic}: {e}"
                         )
-                        self._kafka_error_callback(e)
                     except Exception as e:
                         # Catch-all for unexpected errors during the consumption loop for a topic
                         logger.exception(
