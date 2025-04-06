@@ -18,7 +18,7 @@ from src.data_collection.social_media.reddit.validation.schema import (
 )
 from src.data_collection.social_media.reddit.validation.validator import (
     RedditDataValidator,
-)  # Updated import
+)
 from src.utils.config import load_config
 
 
@@ -76,24 +76,14 @@ class RedditValidationService(BaseValidationService):
         self.last_stats_time = time.time()
         self.stats_interval = self.kafka_config.get("stats_interval_seconds", 60)
 
-        # Signal handling for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_signal)
         signal.signal(signal.SIGTERM, self._handle_signal)
         logger.info("RedditValidationService initialized successfully.")
 
-        # Define Kafka topic keys for the base class constructor
-        # These keys should exist in the kafka_config.yaml file under 'topics' and 'consumer_groups'
         input_topics = self.DEFAULT_INPUT_TOPICS  # List of keys
         consumer_group = self.DEFAULT_CONSUMER_GROUP  # Key for the group name
 
-        # For Reddit, the "valid" destination depends on the content type AND if symbols are detected.
-        # The base class currently assumes a single 'valid' topic key.
-        # We need to override the process_message or add logic to handle multiple valid topics.
-        # Let's start by providing the main validated topic key, and override message processing.
-        # Option 1: Provide one key, override process_message (Chosen for now)
         valid_topic = self.DEFAULT_VALID_TOPIC
-        # Option 2: Pass multiple valid topic keys and modify base class (More complex)
-
         invalid_topic = self.DEFAULT_INVALID_TOPIC
         error_topic = self.DEFAULT_ERROR_TOPIC
 
@@ -103,14 +93,12 @@ class RedditValidationService(BaseValidationService):
             validator=self.validator,
             input_topics_config_keys=input_topics,
             consumer_group_config_key=consumer_group,
-            valid_topic_config_key=valid_topic,  # Will need custom routing logic
+            valid_topic_config_key=valid_topic,
             invalid_topic_config_key=invalid_topic,
             error_topic_config_key=error_topic,
             config_path=self.config_path,
         )
 
-        # Store the specific topic keys needed for custom routing
-        # These are fetched from the loaded kafka_config by the base class
         self.post_topic = self.kafka_config["topics"].get(self.DEFAULT_VALID_POST_TOPIC)
         self.comment_topic = self.kafka_config["topics"].get(
             self.DEFAULT_VALID_COMMENT_TOPIC
@@ -130,29 +118,24 @@ class RedditValidationService(BaseValidationService):
             consumer_groups = self.kafka_config.get("consumer_groups", {})
 
             # --- Consumer Setup ---
-            # Get defaults from the 'consumer' section of the config
             consumer_defaults = self.kafka_config.get("consumer", {})
             logger.debug(f"Loaded consumer defaults: {consumer_defaults}")
 
-            # Define input topics and map to consumer groups
             topic_group_map = {
                 topics_config["social_media_reddit_posts"]: consumer_groups.get(
                     "reddit_validation",
-                    "reddit-validation-group",  # Default group if not in config
+                    "reddit-validation-group",
                 ),
                 topics_config["social_media_reddit_comments"]: consumer_groups.get(
                     "reddit_comments_validation", "reddit-comments-validation-group"
                 ),
-                # Add other consumer topics here if needed
             }
 
             logger.info("Initializing Kafka consumers...")
             for topic, group_id in topic_group_map.items():
-                # Prepare kwargs for KafkaConsumerWrapper constructor
                 consumer_kwargs = {
                     "bootstrap_servers": bootstrap_servers,
                     "group_id": group_id,
-                    # Map keys from YAML (or defaults) to KafkaConsumerWrapper args
                     "auto_offset_reset": consumer_defaults.get(
                         "auto_offset_reset", "earliest"
                     ),
@@ -171,13 +154,9 @@ class RedditValidationService(BaseValidationService):
                     "session_timeout_ms": consumer_defaults.get(
                         "session_timeout_ms", 10000
                     ),
-                    # Add other relevant consumer settings from config if needed
-                    # e.g., 'client_id', 'api_version', security settings
-                    # "security_protocol": consumer_defaults.get("security_protocol"),
-                    # ...
-                    "consumer_timeout_ms": 1000,  # Keep the explicit timeout for the consume loop
+                    "consumer_timeout_ms": 1000,
                 }
-                # Remove None values to avoid overriding kafka-python defaults unintentionally
+
                 consumer_kwargs = {
                     k: v for k, v in consumer_kwargs.items() if v is not None
                 }
@@ -187,7 +166,7 @@ class RedditValidationService(BaseValidationService):
                 try:
                     self.consumers[topic] = KafkaConsumerWrapper(
                         topics=[topic],
-                        **consumer_kwargs,  # Unpack the prepared arguments
+                        **consumer_kwargs,
                     )
                     logger.info(
                         f"Initialized consumer for topic '{topic}' with group '{group_id}'"
@@ -196,15 +175,12 @@ class RedditValidationService(BaseValidationService):
                     logger.exception(
                         f"Failed to initialize consumer for topic '{topic}'"
                     )
-                    # Decide if failure is critical: raise e or continue?
-                    raise  # Re-raise to stop service initialization on consumer failure
+                    raise
 
             # --- Producer Setup ---
-            # Get defaults from the 'producer' section of the config
             producer_defaults = self.kafka_config.get("producer", {})
             logger.debug(f"Loaded producer defaults: {producer_defaults}")
 
-            # Define output topics mapping (remains the same)
             self.output_topic_map = {
                 "validated_posts": topics_config["social_media_reddit_validated"],
                 "validated_comments": topics_config[
@@ -217,52 +193,37 @@ class RedditValidationService(BaseValidationService):
                 "error": topics_config["social_media_reddit_error"],
             }
 
-            # Prepare base producer kwargs
-            # Map keys from YAML (or defaults) to KafkaProducerWrapper args
             base_producer_kwargs = {
                 "bootstrap_servers": bootstrap_servers,
-                "acks": producer_defaults.get(
-                    "acks", 1
-                ),  # Default to 1 if not specified
-                "retries": producer_defaults.get("retries", 3),
-                # Pass other settings via kwargs to KafkaProducerWrapper
-                "linger_ms": producer_defaults.get("linger_ms", 5),
-                "batch_size": producer_defaults.get("batch_size", 16384),
-                "buffer_memory": producer_defaults.get("buffer_memory", 33554432),
-                # Add other relevant producer settings from config if needed
-                # e.g., 'client_id', 'compression_type', security settings
+                "acks": producer_defaults.get("acks", 1),
+                "retries": producer_defaults.get("retries"),
+                "linger_ms": producer_defaults.get("linger_ms"),
+                "batch_size": producer_defaults.get("batch_size"),
+                "buffer_memory": producer_defaults.get("buffer_memory"),
                 "compression_type": producer_defaults.get("compression_type"),
-                # "security_protocol": producer_defaults.get("security_protocol"),
-                # ...
             }
-            # Remove None values
+
             base_producer_kwargs = {
                 k: v for k, v in base_producer_kwargs.items() if v is not None
             }
 
             logger.info("Initializing Kafka producers...")
-            # All producers share the same config in this setup
-            # If different configs per output topic were needed, this logic would change.
             shared_producer_kwargs = base_producer_kwargs.copy()
             logger.debug(f"Shared producer args: {shared_producer_kwargs}")
 
             try:
-                # Create one producer instance shared by all outputs (typical use case)
-                # We map logical keys ('validated_posts', etc.) to this single producer instance.
                 shared_producer = KafkaProducerWrapper(**shared_producer_kwargs)
                 logger.info("Initialized shared Kafka producer.")
 
                 for key in self.output_topic_map.keys():
-                    self.producers[key] = (
-                        shared_producer  # All keys point to the same producer
-                    )
+                    self.producers[key] = shared_producer
                     logger.info(
                         f"Mapped producer key '{key}' (Topic: '{self.output_topic_map[key]}') to shared producer instance."
                     )
 
             except Exception:
                 logger.exception("Failed to initialize shared Kafka producer.")
-                raise  # Re-raise to stop service initialization
+                raise
 
         except KeyError as e:
             logger.exception(
@@ -304,10 +265,6 @@ class RedditValidationService(BaseValidationService):
             if source_topic == self.kafka_config["topics"]["social_media_reddit_posts"]:
                 return "validated_posts"
             else:
-                # If not from posts topic but is a Post and has symbols, it goes to symbols topic
-                # If it has no symbols and isn't from posts topic, where should it go? Error/Invalid?
-                # For now, assume posts from non-post topics might be symbol related if they don't have symbols explicitly
-                # This logic might need refinement based on data flow specifics.
                 logger.warning(
                     f"Post {validated_model.id} received from non-post topic '{source_topic}' without detected symbols. Routing to 'validated_posts'."
                 )
@@ -324,7 +281,6 @@ class RedditValidationService(BaseValidationService):
                 )
                 return "validated_comments"  # Or potentially 'invalid'?
         else:
-            # Should not happen if validation succeeded
             logger.error(
                 f"Cannot determine target producer for unknown validated model type: {type(validated_model)}"
             )
@@ -335,8 +291,8 @@ class RedditValidationService(BaseValidationService):
         self.processed_count += 1
         message_value = raw_message.get("value")
         source_topic = raw_message.get("topic", "unknown")
-        message_key = raw_message.get("key")  # Can be None
-        message_offset = raw_message.get("offset", -1)  # Default if not present
+        message_key = raw_message.get("key")
+        message_offset = raw_message.get("offset", -1)
 
         log_context = {
             "topic": source_topic,
@@ -367,7 +323,7 @@ class RedditValidationService(BaseValidationService):
             return
 
         item_id = message_value.get("id", "UNKNOWN_ID")
-        log_context["item_id"] = item_id  # Add item_id to context
+        log_context["item_id"] = item_id
 
         logger.info(f"Processing message | Context: {log_context}")
 
@@ -384,7 +340,6 @@ class RedditValidationService(BaseValidationService):
                     f"Validation SUCCEEDED | Type: {validated_model.content_type} | Context: {log_context}"
                 )
 
-                # Determine the target producer based on validated data type and potentially source topic
                 target_producer_key = self._determine_target_producer(
                     validated_model, source_topic
                 )
@@ -408,11 +363,9 @@ class RedditValidationService(BaseValidationService):
                             "error",
                         )
                         self.error_count += 1
-                        return  # Stop processing this message
+                        return
 
-                    validated_data_dict = validated_model.model_dump(
-                        mode="json"
-                    )  # Use Pydantic's recommended way
+                    validated_data_dict = validated_model.model_dump(mode="json")
 
                     log_context["target_topic"] = target_topic
                     log_context["producer_key"] = target_producer_key
@@ -434,10 +387,8 @@ class RedditValidationService(BaseValidationService):
                         error_producer = self.producers.get("error")
                         if error_producer:
                             self._send_to_producer(
-                                error_producer,  # Use fetched error producer
-                                self.output_topic_map[
-                                    "error"
-                                ],  # Use configured error topic
+                                error_producer,
+                                self.output_topic_map["error"],
                                 {
                                     "original_payload": validated_data_dict,
                                     "error": f"Producer instance missing for key {target_producer_key}",
@@ -448,10 +399,10 @@ class RedditValidationService(BaseValidationService):
                                 "error",
                             )
                         self.error_count += 1
-                        return  # Stop processing this message
+                        return
 
                     send_success = self._send_to_producer(
-                        target_producer,  # Pass the fetched producer instance
+                        target_producer,
                         target_topic,
                         validated_data_dict,
                         f"validated_{item_id}",
@@ -474,10 +425,8 @@ class RedditValidationService(BaseValidationService):
                         error_producer = self.producers.get("error")
                         if error_producer:
                             self._send_to_producer(
-                                error_producer,  # Use fetched error producer
-                                self.output_topic_map[
-                                    "error"
-                                ],  # Use configured error topic
+                                error_producer,
+                                self.output_topic_map["error"],
                                 {
                                     "original_payload": validated_data_dict,
                                     "error": "send_message returned false for validated message",
@@ -501,12 +450,10 @@ class RedditValidationService(BaseValidationService):
                     error_producer = self.producers.get("error")
                     if error_producer:
                         self._send_to_producer(
-                            error_producer,  # Use fetched error producer
-                            self.output_topic_map[
-                                "error"
-                            ],  # Use configured error topic
+                            error_producer,
+                            self.output_topic_map["error"],
                             {
-                                "original_payload": validated_model,  # Send the model itself here
+                                "original_payload": validated_model,
                                 "error": f"No producer for key '{target_producer_key}'",
                                 "context": log_context,
                             },
@@ -521,7 +468,6 @@ class RedditValidationService(BaseValidationService):
                     self.error_count += 1
 
             else:
-                # Validation failed (either schema or rules)
                 self.invalid_count += 1
                 logger.warning(
                     f"Validation FAILED | Errors: {validation_errors} | Context: {log_context}"
@@ -533,7 +479,7 @@ class RedditValidationService(BaseValidationService):
                     "processing_timestamp": datetime.now(timezone.utc)
                     .isoformat()
                     .replace("+00:00", "Z"),
-                    "log_context": log_context,  # Include context for easier debugging
+                    "log_context": log_context,
                 }
 
                 # Fetch the invalid producer instance
@@ -546,7 +492,7 @@ class RedditValidationService(BaseValidationService):
                         f"Attempting to send invalid message | Context: {log_context}"
                     )
                     send_success = self._send_to_producer(
-                        invalid_producer,  # Use fetched invalid producer
+                        invalid_producer,
                         invalid_topic,
                         invalid_data,
                         f"invalid_{item_id}",
@@ -557,8 +503,8 @@ class RedditValidationService(BaseValidationService):
                         logger.error(
                             f"Failed to queue invalid message via send_message. Context: {log_context}"
                         )
-                        self.error_count += 1  # Count send failure as error
-                        # Optionally send info about this failure to the error topic
+                        self.error_count += 1
+
                         error_producer = self.producers.get("error")
                         if error_producer:
                             self._send_to_producer(
@@ -578,15 +524,11 @@ class RedditValidationService(BaseValidationService):
                     logger.error(
                         "Producer for 'invalid' topic not found. Cannot send invalid message."
                     )
-                    # Potentially send to error topic if invalid topic is essential?
-                    # Fetch the error producer instance
                     error_producer = self.producers.get("error")
                     if error_producer:
                         self._send_to_producer(
-                            error_producer,  # Use fetched error producer
-                            self.output_topic_map[
-                                "error"
-                            ],  # Use configured error topic
+                            error_producer,
+                            self.output_topic_map["error"],
                             {
                                 "original_payload": invalid_data,
                                 "error": "Producer for invalid topic not configured",
@@ -600,7 +542,7 @@ class RedditValidationService(BaseValidationService):
                         logger.error(
                             f"CRITICAL: Error producer not found, cannot report missing invalid producer. Context: {log_context}"
                         )
-                    self.error_count += 1  # Count as error if invalid topic missing
+                    self.error_count += 1
 
         except Exception as e:
             self.error_count += 1
@@ -610,10 +552,9 @@ class RedditValidationService(BaseValidationService):
             # Fetch the error producer instance
             error_producer = self.producers.get("error")
             if error_producer:
-                # Send the original raw value if possible
                 self._send_to_producer(
-                    error_producer,  # Use fetched error producer
-                    self.output_topic_map["error"],  # Use configured error topic
+                    error_producer,
+                    self.output_topic_map["error"],
                     {
                         "original_message": message_value,
                         "error": str(e),
@@ -629,17 +570,16 @@ class RedditValidationService(BaseValidationService):
                     f"CRITICAL: Error producer not found, cannot report critical processing error. Context: {log_context}"
                 )
         finally:
-            self._report_stats()  # Report stats periodically
+            self._report_stats()
 
     def _send_to_error_topic(
         self,
         data_payload: Any,
         error_type: str,
         error_message: str,
-        context: Dict[str, Any],  # Pass context for richer error messages
+        context: Dict[str, Any],
     ):
         """Sends problematic data and error context to the designated error topic."""
-        # Fetch the error producer instance
         error_producer = self.producers.get("error")
         if error_producer:
             error_topic = self.output_topic_map["error"]
@@ -647,7 +587,7 @@ class RedditValidationService(BaseValidationService):
             context["producer_key"] = "error"
 
             error_data = {
-                "original_payload": data_payload,  # Might fail serialization if not dict/list/primitive
+                "original_payload": data_payload,
                 "error_type": error_type,
                 "error_message": error_message,
                 "service_name": self.__class__.__name__,
@@ -667,11 +607,9 @@ class RedditValidationService(BaseValidationService):
                 "error",
             )
             if not success:
-                # This is critical - we failed to report an error
                 logger.error(
                     f"CRITICAL: Failed to send message to error topic '{error_topic}' via send_message | Context: {context}"
                 )
-                # Potentially add fallback logging (e.g., to a file)
         else:
             logger.error(
                 f"Producer for 'error' topic not found. Cannot send error message | Error Type: {error_type} | Context: {context}"
@@ -697,13 +635,7 @@ class RedditValidationService(BaseValidationService):
                     f"Processing Stats ({int(current_time - self.last_stats_time)}s interval): No messages processed yet."
                 )
 
-            # Reset counters for next interval? Or keep cumulative? Cumulative is usually better.
             self.last_stats_time = current_time
-            # If resetting:
-            # self.processed_count = 0
-            # self.valid_count = 0
-            # self.invalid_count = 0
-            # self.error_count = 0
 
     def run(self):
         """Starts the main consumer loop."""
@@ -720,10 +652,9 @@ class RedditValidationService(BaseValidationService):
                 # Iterate through configured consumers
                 for topic, consumer in self.consumers.items():
                     if not self.running:
-                        break  # Check running flag frequently
+                        break
 
                     logger.debug(f"Polling consumer for topic: {topic}")
-                    # The consume() method in the wrapper should yield messages or None
                     message_generator = consumer.consume()
 
                     try:
@@ -732,83 +663,67 @@ class RedditValidationService(BaseValidationService):
                                 break
 
                             if msg is not None:
-                                # Check for Kafka errors embedded in the message wrapper
                                 if "error" in msg and msg["error"] is not None:
-                                    # The wrapper might log, but we ensure it's handled
                                     logger.error(
                                         f"Kafka consume error for topic {topic}: {msg['error']}"
                                     )
-                                    # Depending on error type, might need specific handling
-                                    # self._kafka_error_callback(msg['error']) # Call if wrapper doesn't
-                                    self.error_count += 1  # Count consumer errors
+                                    self.error_count += 1
                                 elif "value" in msg:
                                     self.process_message(msg)
                                     message_processed_in_cycle = True
                                 else:
-                                    # Should not happen with the current wrapper structure
                                     logger.warning(
                                         f"Received unexpected message structure from consumer wrapper: {msg}"
                                     )
 
-                            # Add a small sleep even if processing to prevent busy-waiting if queue drains fast
                             time.sleep(0.01)
 
                     except StopIteration:
-                        # Generator exhausted (may happen with timeout) - log as debug
                         logger.debug(
                             f"Consumer generator for topic {topic} finished cycle or timed out."
                         )
                     except KafkaException as e:
-                        # Handle Kafka-specific exceptions during consumption
                         logger.error(
                             f"KafkaException during consumption from topic {topic}: {e}"
                         )
-                        self._kafka_error_callback(
-                            e
-                        )  # Use the callback for consistent handling
+                        self._kafka_error_callback(e)
                     except Exception as e:
                         # Catch-all for unexpected errors during the consumption loop for a topic
                         logger.exception(
                             f"Unexpected error consuming from topic {topic}: {e}"
                         )
                         self.error_count += 1
-                        # Consider if this should stop the service or just log and continue
-                        # self.stop() # Uncomment to stop service on unexpected consumer loop error
 
                     if not self.running:
-                        break  # Check again after inner loop
+                        break
 
                 # If no messages were processed across all consumers in a cycle, sleep a bit longer
                 if not message_processed_in_cycle and self.running:
                     logger.debug(
                         f"No messages consumed in this cycle across {len(self.consumers)} topics. Sleeping..."
                     )
-                    time.sleep(0.5)  # Main loop sleep
+                    time.sleep(0.5)
 
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt detected. Initiating shutdown.")
         except Exception as e:
-            # Catch exceptions in the main `while self.running` loop
             logger.exception(f"Critical error in service run loop: {e}")
         finally:
             logger.info("Service run loop exiting. Initiating final cleanup...")
-            self.stop()  # Ensure stop is called
+            self.stop()
 
     def stop(self):
         """Stops the consumer service and closes Kafka clients gracefully."""
-        # Prevent multiple shutdowns
         if not self.running:
             logger.info("Stop called, but service was not running or already stopping.")
             return
 
         logger.info("Shutting down Reddit validation service...")
-        self.running = False  # Signal loops to stop
+        self.running = False
 
-        # Report final stats
         logger.info("Reporting final statistics...")
         self._report_stats(force=True)
 
-        # Wait a moment for loops to finish processing current item
         time.sleep(1)
 
         logger.info("Closing Kafka consumers...")
@@ -822,11 +737,7 @@ class RedditValidationService(BaseValidationService):
         logger.info("Flushing and closing Kafka producers...")
         for key, producer in self.producers.items():
             try:
-                producer.flush(timeout=10)  # Flush remaining messages
-                # Close is often implicit in modern librdkafka wrappers upon deletion/gc,
-                # but explicit close might be needed depending on the wrapper implementation.
-                # If KafkaProducerWrapper has an explicit close, call it here.
-                # producer.close()
+                producer.flush(timeout=10)
                 logger.info(f"Flushed producer for key: {key}")
             except Exception as e:
                 logger.exception(f"Error flushing/closing producer for key {key}: {e}")
