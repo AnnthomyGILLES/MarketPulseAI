@@ -415,13 +415,9 @@ class RedditValidationService(BaseValidationService):
                             f"Successfully queued validated message | Context: {log_context}"
                         )
                     else:
-                        # The producer wrapper might log errors, but we add context here
                         logger.error(
                             f"Failed to queue validated message via send_message | Context: {log_context}"
                         )
-                        # If send_message returns False, it usually means an immediate error (e.g., buffer full, serialization issue)
-                        # Consider if sending to error topic is appropriate or if relying on producer's error_cb is enough
-                        # Fetch the error producer instance
                         error_producer = self.producers.get("error")
                         if error_producer:
                             self._send_to_producer(
