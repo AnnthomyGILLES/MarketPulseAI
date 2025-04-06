@@ -65,17 +65,16 @@ class BaseValidationService(abc.ABC):
         logger.info(f"[{self.service_name}] Loading Kafka configuration from: {self.config_path}")
         try:
             self.config = load_config(str(self.config_path))
-            if "kafka" not in self.config:
-                raise ValueError("Configuration missing 'kafka' section.")
-            self.kafka_config = self.config["kafka"]
-            # Basic validation of required keys
-            if "topics" not in self.kafka_config: raise KeyError("kafka.topics")
-            if "consumer_groups" not in self.kafka_config: raise KeyError("kafka.consumer_groups")
-            if "bootstrap_servers" not in self.kafka_config: raise KeyError("kafka.bootstrap_servers")
+            # Basic validation of required keys directly in the loaded config
+            if "topics" not in self.config: raise KeyError("Missing 'topics' key in config.")
+            if "consumer_groups" not in self.config: raise KeyError("Missing 'consumer_groups' key in config.")
+            if "bootstrap_servers" not in self.config: raise KeyError("Missing 'bootstrap_servers' key in config.")
+            # No longer expect a top-level 'kafka' key, self.config holds the direct YAML structure
+            # self.kafka_config = self.config["kafka"] # Removed this line
 
         except (FileNotFoundError, KeyError, ValueError) as e:
             logger.exception(
-                f"[{self.service_name}] Failed to load or parse Kafka configuration from {self.config_path}: {e}"
+                f"[{self.service_name}] Failed to load or parse required keys from Kafka configuration {self.config_path}: {e}"
             )
             raise
 
@@ -91,7 +90,8 @@ class BaseValidationService(abc.ABC):
             "errors": 0, # Renamed from error_count for clarity
             "last_report_time": time.time(),
         }
-        self.stats_interval = self.kafka_config.get("stats_interval_seconds", 60)
+        # Get stats interval from general config section or provide a default
+        self.stats_interval = self.config.get("config", {}).get("stats_interval_seconds", 60)
 
         # Signal handling for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_signal)
@@ -136,26 +136,29 @@ class BaseValidationService(abc.ABC):
         self.error_producer: Optional[KafkaProducerWrapper] = None
 
         try:
-            bootstrap_servers = self.kafka_config["bootstrap_servers"]
-            topics_config = self.kafka_config["topics"]
-            consumer_groups = self.kafka_config["consumer_groups"]
+            # Access config keys directly from self.config
+            bootstrap_servers = self.config["bootstrap_servers"]
+            topics_config = self.config["topics"]
+            consumer_groups = self.config["consumer_groups"]
 
             # --- Consumer Setup ---
             input_topics = [topics_config[key] for key in self.input_topics_config_keys]
             group_id = consumer_groups[self.consumer_group_config_key]
 
-            consumer_defaults = self.kafka_config.get("consumer_defaults", {})
+            # Get consumer defaults from the 'consumer' section or provide empty dict
+            consumer_defaults = self.config.get("consumer", {})
             consumer_conf = {
                 "bootstrap.servers": bootstrap_servers,
                 "group.id": group_id,
+                # Use defaults from the 'consumer' section in the config file
                 "auto.offset.reset": consumer_defaults.get("auto.offset.reset", "earliest"),
                 "enable.auto.commit": consumer_defaults.get("enable.auto.commit", True),
                 "auto.commit.interval.ms": consumer_defaults.get("auto.commit.interval.ms", 5000),
                 "error_cb": self._kafka_error_callback,
                 # Add any other default or specific consumer configs here
             }
-            # Allow overriding defaults from config if needed
-            consumer_conf.update(self.kafka_config.get(f"{self.service_name.lower()}_consumer_config", {}))
+            # Allow overriding defaults from config if needed (e.g., a service-specific section)
+            consumer_conf.update(self.config.get(f"{self.service_name.lower()}_consumer_config", {}))
 
             logger.info(f"[{self.service_name}] Initializing Kafka consumer for topics: {input_topics}, group: {group_id}")
             self.consumer = KafkaConsumerWrapper(
@@ -166,9 +169,11 @@ class BaseValidationService(abc.ABC):
             logger.info(f"[{self.service_name}] Consumer initialized.")
 
             # --- Producer Setup ---
-            producer_defaults = self.kafka_config.get("producer_defaults", {})
+            # Get producer defaults from the 'producer' section or provide empty dict
+            producer_defaults = self.config.get("producer", {})
             base_producer_conf = {
                 "bootstrap.servers": bootstrap_servers,
+                 # Use defaults from the 'producer' section in the config file
                 "acks": producer_defaults.get("acks", "all"),
                 "retries": producer_defaults.get("retries", 3),
                 "error_cb": self._kafka_error_callback,
@@ -180,28 +185,30 @@ class BaseValidationService(abc.ABC):
             # Valid Producer
             self.valid_topic = topics_config[self.valid_topic_config_key]
             valid_producer_conf = base_producer_conf.copy()
-            valid_producer_conf.update(self.kafka_config.get(f"{self.service_name.lower()}_valid_producer_config", {}))
+            # Allow overriding defaults from config if needed (e.g., a service-specific section)
+            valid_producer_conf.update(self.config.get(f"{self.service_name.lower()}_valid_producer_config", {}))
             self.valid_producer = KafkaProducerWrapper(config=valid_producer_conf)
             logger.info(f"[{self.service_name}] Initialized 'valid' producer for topic: {self.valid_topic}")
 
             # Invalid Producer
             self.invalid_topic = topics_config[self.invalid_topic_config_key]
             invalid_producer_conf = base_producer_conf.copy()
-            invalid_producer_conf.update(self.kafka_config.get(f"{self.service_name.lower()}_invalid_producer_config", {}))
+            # Allow overriding defaults from config if needed (e.g., a service-specific section)
+            invalid_producer_conf.update(self.config.get(f"{self.service_name.lower()}_invalid_producer_config", {}))
             self.invalid_producer = KafkaProducerWrapper(config=invalid_producer_conf)
             logger.info(f"[{self.service_name}] Initialized 'invalid' producer for topic: {self.invalid_topic}")
 
             # Error Producer
             self.error_topic = topics_config[self.error_topic_config_key]
             error_producer_conf = base_producer_conf.copy()
-            error_producer_conf.update(self.kafka_config.get(f"{self.service_name.lower()}_error_producer_config", {}))
+            # Allow overriding defaults from config if needed (e.g., a service-specific section)
+            error_producer_conf.update(self.config.get(f"{self.service_name.lower()}_error_producer_config", {}))
             self.error_producer = KafkaProducerWrapper(config=error_producer_conf)
             logger.info(f"[{self.service_name}] Initialized 'error' producer for topic: {self.error_topic}")
 
-
         except KeyError as e:
             logger.exception(
-                f"[{self.service_name}] Configuration key error during Kafka client setup: Missing key {e}"
+                f"[{self.service_name}] Configuration key error during Kafka client setup: Missing key {e} in {self.config_path}"
             )
             raise ValueError(f"Missing required Kafka configuration key: {e}")
         except Exception as e:
