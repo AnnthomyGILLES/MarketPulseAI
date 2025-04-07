@@ -21,6 +21,8 @@ cassandra-driver = "^3.29.2"
 polygon-api-client = "^1.14.4"
 praw = "^7.8.1"
 python-dotenv = "^1.1.0"
+confluent-kafka = "^2.9.0"
+pendulum = "^3.0.0"
 
 
 [build-system]
