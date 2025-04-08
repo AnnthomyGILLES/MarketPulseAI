@@ -71,7 +71,7 @@ class SparkPipelineConfig(BaseModel):
 
 
 def load_config(
-    config_path: Path = Path("config/kafka/kafka_config.yaml"),
+    config_path: Path,
 ) -> SparkPipelineConfig:
     """Loads Kafka configuration from YAML and creates the pipeline config."""
     logger.info(f"Loading Kafka configuration from: {config_path}")
@@ -83,17 +83,23 @@ def load_config(
         kafka_raw_config = yaml.safe_load(f)
 
     kafka_conf = KafkaConfig(**kafka_raw_config)
-    cassandra_conf = CassandraConfig()  # Add loading mechanism if needed
+    cassandra_conf = CassandraConfig()
 
-    # Construct checkpoint location with timestamp to avoid conflicts on restart
+    # Define the base checkpoint path directly (matching the model default)
+    DEFAULT_CHECKPOINT_BASE = "/tmp/marketpulse/checkpoint"
+
+    # Construct timestamped checkpoint location
     timestamp_str = datetime.now().strftime("%Y%m%d%H%M%S")
-    checkpoint_base = Path(SparkPipelineConfig().checkpoint_location_base)
+    checkpoint_base = Path(DEFAULT_CHECKPOINT_BASE)  # Use the defined default
     checkpoint_location = str(checkpoint_base / f"reddit_sentiment_{timestamp_str}")
+    logger.info(f"Generated unique checkpoint location: {checkpoint_location}")
 
+    # Return the final config, Pydantic uses model defaults unless overridden
     return SparkPipelineConfig(
         kafka=kafka_conf,
         cassandra=cassandra_conf,
-        checkpoint_location_base=checkpoint_location,  # Updated location
+        # Override the default base with the generated timestamped path
+        checkpoint_location_base=checkpoint_location,
     )
 
 
@@ -466,55 +472,40 @@ def write_to_cassandra(df: DataFrame, epoch_id: int, config: SparkPipelineConfig
 def run_pipeline():
     """Main function to set up and run the Spark pipeline."""
     try:
-        # Load Configuration
-        script_dir = Path(__file__).parent
-        root_dir = script_dir.parent  # Adjust based on actual project structure
+        # Calculate paths relative to the script location
+        script_path = Path(__file__).resolve()
+        script_dir = script_path.parent  # /opt/bitnami/spark/src/data_processing
+        # Go up THREE levels to reach the project root mapped in Docker (/opt/bitnami/spark)
+        root_dir = script_dir.parent.parent
         config_path = root_dir / "config" / "kafka" / "kafka_config.yaml"
+        log_dir = root_dir / "logs"
+
+        logger.info(f"Script path: {script_path}")
+        logger.info(f"Calculated project root directory: {root_dir}")
+        logger.info(f"Attempting to load config from: {config_path}")
+
+        # Load Configuration (Pass the calculated path)
         config = load_config(config_path)
 
         # Setup Logging
         log_level = os.environ.get("LOG_LEVEL", config.log_level)
-        logger.add(
-            sink=f"logs/reddit_sentiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
-            level=log_level,
-            rotation="10 MB",  # Rotate log files
+        log_dir.mkdir(parents=True, exist_ok=True)  # Create logs dir if not present
+        log_file_path = (
+            log_dir / f"reddit_sentiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         )
+
+        logger.add(sink=log_file_path, level=log_level, rotation="10 MB")
         logger.info("Logging setup complete.")
+        logger.info(f"Logging to: {log_file_path}")
         logger.info(f"Pipeline Configuration: {config.dict()}")
 
         # Create Spark Session
         spark = create_spark_session(config)
 
-        # Create Cassandra Keyspace and Table (Idempotent)
+        # Cassandra Schema Check (Manual Step Recommended)
         logger.info(
-            f"Ensuring Cassandra keyspace '{config.cassandra.keyspace}' and table '{config.cassandra.table}' exist..."
+            "Skipping automatic Cassandra schema creation from Spark. Apply schema manually using config/cassandra/schema.cql if needed."
         )
-        # This should ideally be done via a schema management tool (like CQL scripts) or separate setup step
-        # spark.sql(f"CREATE KEYSPACE IF NOT EXISTS {config.cassandra.keyspace} WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': 1}}") # Adjust replication for prod
-        # spark.sql(f"""
-        # CREATE TABLE IF NOT EXISTS {config.cassandra.keyspace}.{config.cassandra.table} (
-        #     symbol TEXT,
-        #     timestamp TIMESTAMP, // Use Cassandra timestamp type for primary key
-        #     window_start TIMESTAMP,
-        #     window_end TIMESTAMP,
-        #     subreddit TEXT,
-        #     collection_method TEXT,
-        #     collection_timestamp TIMESTAMP,
-        #     post_created_datetime TIMESTAMP,
-        #     window_size TEXT,
-        #     sentiment_score FLOAT,
-        #     sentiment_magnitude FLOAT,
-        #     post_count BIGINT,
-        #     unique_authors BIGINT,
-        #     content_types MAP<TEXT, BIGINT>,
-        #     avg_score DOUBLE,
-        #     min_score INT,
-        #     max_score INT,
-        #     avg_upvote_ratio DOUBLE,
-        #     permalink_sample LIST<TEXT>,
-        #     PRIMARY KEY ((symbol, window_start), timestamp DESC) // Example Partitioning/Clustering
-        # ) WITH CLUSTERING ORDER BY (timestamp DESC);
-        # """) # Warning: Check schema types and Primary Key Design carefully! `timestamp` should be Cassandra compatible type.
 
         # Read from Kafka
         kafka_stream_df = read_from_kafka(spark, config)
@@ -525,10 +516,14 @@ def run_pipeline():
         # Aggregate Data
         aggregated_df = aggregate_sentiment(processed_df, config)
 
+        # Checkpoint Location (Uses absolute path from config)
+        checkpoint_location = config.checkpoint_location_base
+        logger.info(f"Using checkpoint location: {checkpoint_location}")
+
         # Write to Cassandra using foreachBatch
         query = (
             aggregated_df.writeStream.outputMode("update")
-            .option("checkpointLocation", config.checkpoint_location_base)
+            .option("checkpointLocation", checkpoint_location)
             .foreachBatch(lambda df, epoch_id: write_to_cassandra(df, epoch_id, config))
             .trigger(processingTime="1 minute")
             .start()
@@ -537,8 +532,9 @@ def run_pipeline():
         logger.info("Streaming query started. Waiting for termination...")
         query.awaitTermination()
 
-    except FileNotFoundError as e:
-        logger.error(f"Configuration file error: {e}")
+    except FileNotFoundError:
+        # Simplified error message, exc_info=True provides details
+        logger.error("Failed to find or load configuration file.", exc_info=True)
     except Exception as e:
         logger.error(
             f"An unexpected error occurred in the pipeline: {e}", exc_info=True
