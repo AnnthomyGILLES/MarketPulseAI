@@ -49,7 +49,7 @@ class RedditBase(BaseModel):
     collection_timestamp: str = Field(
         ..., description="UTC timestamp when the item was collected (ISO 8601 format)."
     )
-    created_utc: float = Field(
+    created_utc: int = Field(
         ..., description="Original creation timestamp (epoch seconds)."
     )
     author: str = Field(
@@ -85,16 +85,20 @@ class RedditBase(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def convert_created_utc(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert created_utc float to ISO string and add to values."""
-        created_utc_float = values.get("created_utc")
+        """Convert created_utc integer to ISO string and add to values."""
+        created_utc_val = values.get("created_utc")
         created_dt_iso = None
-        if isinstance(created_utc_float, (int, float)):
+        if isinstance(created_utc_val, (int, float)):  # Keep float check for graceful handling
             try:
-                dt_utc = datetime.fromtimestamp(created_utc_float, timezone.utc)
+                # Convert float to int if needed
+                if isinstance(created_utc_val, float):
+                    logger.warning(f"Converting float created_utc to int: {created_utc_val}")
+                    created_utc_val = int(created_utc_val)
+                dt_utc = datetime.fromtimestamp(created_utc_val, timezone.utc)
                 created_dt_iso = dt_utc.isoformat().replace("+00:00", "Z")
             except (ValueError, TypeError) as e:
                 logger.warning(
-                    f"Could not convert created_utc '{created_utc_float}' to datetime: {e}"
+                    f"Could not convert created_utc '{created_utc_val}' to datetime: {e}"
                 )
                 # Let potential validation error be raised later if needed
         elif "created_datetime" not in values:
