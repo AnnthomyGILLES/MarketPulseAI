@@ -468,7 +468,7 @@ def run_pipeline():
     try:
         # Load Configuration
         script_dir = Path(__file__).parent
-        root_dir = script_dir.parent.parent  # Adjust based on actual project structure
+        root_dir = script_dir.parent  # Adjust based on actual project structure
         config_path = root_dir / "config" / "kafka" / "kafka_config.yaml"
         config = load_config(config_path)
 
