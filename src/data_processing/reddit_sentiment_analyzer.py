@@ -1,4 +1,3 @@
-import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -55,9 +54,9 @@ class KafkaConfig(BaseModel):
 
 
 class CassandraConfig(BaseModel):
-    keyspace: str = "marketpulse"
-    table: str = "reddit_sentiment_aggregate"
-    connection_host: str = "localhost"  # Example, adjust as needed
+    keyspace: str
+    table: str
+    connection_host: str
 
 
 class SparkPipelineConfig(BaseModel):
@@ -66,41 +65,84 @@ class SparkPipelineConfig(BaseModel):
     cassandra: CassandraConfig
     processing_window_duration: str = "5 minutes"
     watermark_delay_threshold: str = "10 minutes"
-    checkpoint_location_base: str = "/tmp/marketpulse/checkpoint"
+    checkpoint_location_base_path: str
     log_level: str = "INFO"
+    # Optional: Add package/consistency loading here if fields added to SparkPipelineConfig
+    spark_cassandra_package: str = (
+        "com.datastax.spark:spark-cassandra-connector_2.12:3.4.1"
+    )
+    spark_kafka_package: str = "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1"
+    # cassandra_write_consistency: str = "LOCAL_QUORUM"
 
 
 def load_config(
     config_path: Path,
 ) -> SparkPipelineConfig:
-    """Loads Kafka configuration from YAML and creates the pipeline config."""
-    logger.info(f"Loading Kafka configuration from: {config_path}")
+    """Loads Kafka, Cassandra, and Spark configurations from YAML."""
+    logger.info(f"Loading configuration from: {config_path}")
     if not config_path.exists():
         logger.error(f"Configuration file not found at {config_path}")
         raise FileNotFoundError(f"Configuration file not found at {config_path}")
 
     with open(config_path, "r") as f:
-        kafka_raw_config = yaml.safe_load(f)
+        raw_config = yaml.safe_load(f)
 
-    kafka_conf = KafkaConfig(**kafka_raw_config)
-    cassandra_conf = CassandraConfig()
+    # Validate and parse different sections
+    try:
+        kafka_conf = KafkaConfig(**raw_config["kafka"])
+        # Expect Cassandra config under a 'cassandra' key in the YAML
+        cassandra_conf = CassandraConfig(**raw_config["cassandra"])
+        # Expect Spark settings under a 'spark' key or at the root
+        # Assuming spark settings like app_name, window, watermark, checkpoint base, log_level are top-level or under a 'spark' key
+        # Let's assume they are under a 'spark_settings' key for clarity
+        if "spark_settings" not in raw_config:
+            raise ValueError("Missing 'spark_settings' section in configuration")
 
-    # Define the base checkpoint path directly (matching the model default)
-    DEFAULT_CHECKPOINT_BASE = "/tmp/marketpulse/checkpoint"
+        spark_settings = raw_config["spark_settings"]
 
-    # Construct timestamped checkpoint location
-    timestamp_str = datetime.now().strftime("%Y%m%d%H%M%S")
-    checkpoint_base = Path(DEFAULT_CHECKPOINT_BASE)  # Use the defined default
-    checkpoint_location = str(checkpoint_base / f"reddit_sentiment_{timestamp_str}")
-    logger.info(f"Generated unique checkpoint location: {checkpoint_location}")
+        # Construct timestamped checkpoint location using the configured base path
+        timestamp_str = datetime.now().strftime("%Y%m%d%H%M%S")
+        checkpoint_base = Path(spark_settings["checkpoint_location_base_path"])
+        checkpoint_location_full = str(
+            checkpoint_base / f"reddit_sentiment_{timestamp_str}"
+        )
+        logger.info(f"Generated unique checkpoint location: {checkpoint_location_full}")
 
-    # Return the final config, Pydantic uses model defaults unless overridden
-    return SparkPipelineConfig(
-        kafka=kafka_conf,
-        cassandra=cassandra_conf,
-        # Override the default base with the generated timestamped path
-        checkpoint_location_base=checkpoint_location,
-    )
+        # Create the final config object
+        pipeline_config = SparkPipelineConfig(
+            app_name=spark_settings.get(
+                "app_name", "RedditSentimentAnalysis"
+            ),  # Allow override
+            kafka=kafka_conf,
+            cassandra=cassandra_conf,
+            processing_window_duration=spark_settings.get(
+                "processing_window_duration", "5 minutes"
+            ),
+            watermark_delay_threshold=spark_settings.get(
+                "watermark_delay_threshold", "10 minutes"
+            ),
+            # Store the generated full path, not the base path from config directly
+            checkpoint_location_base_path=checkpoint_location_full,
+            log_level=spark_settings.get("log_level", "INFO"),
+            # Optional: Add package/consistency loading here if fields added to SparkPipelineConfig
+            spark_cassandra_package=spark_settings.get(
+                "spark_cassandra_package",
+                "com.datastax.spark:spark-cassandra-connector_2.12:3.4.1",
+            ),
+            spark_kafka_package=spark_settings.get(
+                "spark_kafka_package",
+                "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1",
+            ),
+            # cassandra_write_consistency=spark_settings.get("cassandra_write_consistency", "LOCAL_QUORUM"),
+        )
+        return pipeline_config
+
+    except KeyError as e:
+        logger.error(f"Missing configuration key: {e} in {config_path}")
+        raise ValueError(f"Missing configuration key: {e}") from e
+    except Exception as e:
+        logger.error(f"Error parsing configuration file {config_path}: {e}")
+        raise
 
 
 # --- Spark Session Initialization ---
@@ -109,19 +151,31 @@ def load_config(
 def create_spark_session(config: SparkPipelineConfig) -> SparkSession:
     """Creates and configures the SparkSession."""
     logger.info(f"Creating Spark session: {config.app_name}")
-    # Add Cassandra connector package dynamically
-    cassandra_package = "com.datastax.spark:spark-cassandra-connector_2.12:3.4.1"  # Verify version compatibility
-    kafka_package = "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1"  # Verify version compatibility
+    # Use configured packages if available, otherwise default (or remove defaults if strictly from config)
+    cassandra_package = getattr(
+        config,
+        "spark_cassandra_package",
+        "com.datastax.spark:spark-cassandra-connector_2.12:3.4.1",
+    )
+    kafka_package = getattr(
+        config,
+        "spark_kafka_package",
+        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1",
+    )
 
     spark = (
         SparkSession.builder.appName(config.app_name)
+        # Use the generated full checkpoint path now stored in checkpoint_location_base_path
         .config(
-            "spark.sql.streaming.checkpointLocation", config.checkpoint_location_base
+            "spark.sql.streaming.checkpointLocation",
+            config.checkpoint_location_base_path,
         )
         .config("spark.jars.packages", f"{cassandra_package},{kafka_package}")
         .config("spark.cassandra.connection.host", config.cassandra.connection_host)
         .config("spark.sql.session.timeZone", "UTC")
-        .config("spark.sql.streaming.schemaInference", "true")
+        .config(
+            "spark.sql.streaming.schemaInference", "true"
+        )  # Consider setting to false and defining schema for robustness
         .config("spark.log.level", config.log_level)
         .getOrCreate()
     )
@@ -330,7 +384,7 @@ def process_reddit_data(df: DataFrame, config: SparkPipelineConfig) -> DataFrame
     sentiment_df = (
         sentiment_df.withColumn("sentiment_score", F.col("sentiment.score"))
         .withColumn("sentiment_magnitude", F.col("sentiment.magnitude"))
-        .drop("sentiment", "cleaned_text", "full_text")
+        .drop("sentiment", "cleaned_text", "full_text")  # Clean up intermediate columns
     )  # Clean up intermediate columns
 
     # Filter out rows where sentiment analysis failed
@@ -453,11 +507,15 @@ def write_to_cassandra(df: DataFrame, epoch_id: int, config: SparkPipelineConfig
     logger.info(
         f"Writing batch {epoch_id} to Cassandra ({config.cassandra.keyspace}.{config.cassandra.table})..."
     )
+    # Use configured consistency level if available
+    consistency_level = getattr(config, "cassandra_write_consistency", "LOCAL_QUORUM")
+    logger.debug(f"Using Cassandra write consistency level: {consistency_level}")
     try:
         df.write.format("org.apache.spark.sql.cassandra").options(
             table=config.cassandra.table, keyspace=config.cassandra.keyspace
         ).mode("append").option(
-            "spark.cassandra.output.consistency.level", "LOCAL_QUORUM"
+            "spark.cassandra.output.consistency.level",
+            consistency_level,  # Use variable
         ).save()
         logger.info(f"Batch {epoch_id} written successfully.")
     except Exception as e:
@@ -472,39 +530,80 @@ def write_to_cassandra(df: DataFrame, epoch_id: int, config: SparkPipelineConfig
 def run_pipeline():
     """Main function to set up and run the Spark pipeline."""
     try:
-        # Calculate paths relative to the script location
-        script_path = Path(__file__).resolve()
-        script_dir = script_path.parent  # /opt/bitnami/spark/src/data_processing
-        # Go up THREE levels to reach the project root mapped in Docker (/opt/bitnami/spark)
-        root_dir = script_dir.parent.parent
-        config_path = root_dir / "config" / "kafka" / "kafka_config.yaml"
-        log_dir = root_dir / "logs"
+        # Calculate paths relative to the script location *inside the container*
+        script_path = (
+            Path(__file__).resolve()
+        )  # e.g., /opt/bitnami/spark/src/data_processing/reddit_sentiment_analyzer.py
+        script_dir = script_path.parent  # e.g., /opt/bitnami/spark/src/data_processing
+        # Go up THREE levels from script dir to reach /opt/bitnami/spark (src -> data_processing -> src -> spark root)
+        root_dir = script_dir.parent.parent.parent
+        # Config path should now be correct relative to the container's mapped config volume
+        config_path = root_dir / "config" / "spark" / "reddit_sentiment_config.yaml"
+        log_dir = (
+            root_dir / "logs" / "spark"
+        )  # Logs will be inside /opt/bitnami/spark/logs
 
-        logger.info(f"Script path: {script_path}")
-        logger.info(f"Calculated project root directory: {root_dir}")
-        logger.info(f"Attempting to load config from: {config_path}")
-
-        # Load Configuration (Pass the calculated path)
-        config = load_config(config_path)
-
-        # Setup Logging
-        log_level = os.environ.get("LOG_LEVEL", config.log_level)
-        log_dir.mkdir(parents=True, exist_ok=True)  # Create logs dir if not present
+        # --- Logging Setup ---
+        log_dir.mkdir(parents=True, exist_ok=True)  # Create log dir first
         log_file_path = (
             log_dir / f"reddit_sentiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         )
+        # Remove default logger to avoid duplicate messages if run multiple times in interactive session
+        logger.remove()
+        # Add console logger
+        logger.add(
+            sink=lambda msg: print(msg, end=""),
+            level="INFO",
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
+        )
+        # Add file logger
+        logger.add(
+            sink=log_file_path,
+            level="DEBUG",
+            rotation="10 MB",  # Log DEBUG to file
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} | {message}",
+        )  # More detail in file
 
-        logger.add(sink=log_file_path, level=log_level, rotation="10 MB")
+        logger.info(f"Script path: {script_path}")
+        logger.info(
+            f"Calculated container root directory: {root_dir}"
+        )  # Log the calculated root
+        logger.info(
+            f"Attempting to load config from: {config_path}"
+        )  # Log the correct target path
+
+        # Load Configuration
+        config = load_config(config_path)
+
+        # Update log level based on config AFTER initial logging setup
+        # Reconfigure console logger level based on config
+        logger.remove()  # Remove previous console logger
+        logger.add(
+            sink=lambda msg: print(msg, end=""),
+            level=config.log_level.upper(),
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
+        )
+        logger.add(
+            sink=log_file_path,
+            level="DEBUG",
+            rotation="10 MB",  # Keep file at DEBUG or adjust as needed
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} | {message}",
+        )
+
         logger.info("Logging setup complete.")
-        logger.info(f"Logging to: {log_file_path}")
-        logger.info(f"Pipeline Configuration: {config.dict()}")
+        logger.info(f"Console log level: {config.log_level.upper()}")
+        logger.info(f"Logging DEBUG+ to: {log_file_path}")
+        logger.info(f"Pipeline Configuration: {config.dict()}")  # Log the loaded config
 
         # Create Spark Session
         spark = create_spark_session(config)
 
         # Cassandra Schema Check (Manual Step Recommended)
         logger.info(
-            "Skipping automatic Cassandra schema creation from Spark. Apply schema manually using config/cassandra/schema.cql if needed."
+            f"Ensure Cassandra keyspace '{config.cassandra.keyspace}' and table '{config.cassandra.table}' exist and match schema."
+        )
+        logger.warning(
+            "Automatic schema creation/validation is not implemented. Apply schema manually if needed."
         )
 
         # Read from Kafka
@@ -516,16 +615,21 @@ def run_pipeline():
         # Aggregate Data
         aggregated_df = aggregate_sentiment(processed_df, config)
 
-        # Checkpoint Location (Uses absolute path from config)
-        checkpoint_location = config.checkpoint_location_base
+        # Checkpoint Location (Uses the generated path from config loading)
+        checkpoint_location = config.checkpoint_location_base_path
         logger.info(f"Using checkpoint location: {checkpoint_location}")
 
         # Write to Cassandra using foreachBatch
         query = (
-            aggregated_df.writeStream.outputMode("update")
+            aggregated_df.writeStream.outputMode(
+                "update"
+            )  # Or "append" if keys guarantee uniqueness across batches
             .option("checkpointLocation", checkpoint_location)
             .foreachBatch(lambda df, epoch_id: write_to_cassandra(df, epoch_id, config))
-            .trigger(processingTime="1 minute")
+            # Adjust trigger as needed
+            .trigger(
+                processingTime=config.processing_window_duration
+            )  # Trigger based on window? Or fixed interval?
             .start()
         )
 
@@ -533,47 +637,24 @@ def run_pipeline():
         query.awaitTermination()
 
     except FileNotFoundError:
-        # Simplified error message, exc_info=True provides details
-        logger.error("Failed to find or load configuration file.", exc_info=True)
+        # Log the path it actually tried
+        logger.exception(f"Configuration file not found. Checked path: {config_path}")
+    except ValueError as e:
+        logger.exception(f"Configuration error: {e}")  # Use exception logger
     except Exception as e:
-        logger.error(
-            f"An unexpected error occurred in the pipeline: {e}", exc_info=True
-        )
+        logger.exception(
+            f"An unexpected error occurred in the pipeline: {e}"
+        )  # Use exception logger
     finally:
         if "spark" in locals() and spark:
             logger.info("Stopping Spark session.")
             spark.stop()
+        logger.info("Pipeline execution finished.")
 
 
 if __name__ == "__main__":
     # --- Example Unit Test Ideas (Commented Out) ---
-    # def test_clean_text():
-    #     assert clean_text("Hello $AAPL world! check https://t.co") == "hello world check"
-    #     assert clean_text("  Multiple   spaces  ") == "multiple spaces"
-    #     assert clean_text(None) is None
-    #
-    # def test_extract_symbols():
-    #     assert extract_symbols("I like $TSLA and GOOG.") == ["TSLA", "GOOG"]
-    #     assert extract_symbols("No symbols here.") is None
-    #     assert extract_symbols("$AMC to the moon!") == ["AMC"]
-    #
-    # def test_sentiment():
-    #     result = get_sentiment("This is great!")
-    #     assert result is not None
-    #     assert result['score'] > 0
-    #     # Add more test cases for sentiment
-    #
-    # # To test Spark transformations, you'd typically create a local SparkSession,
-    # # create sample DataFrames, apply transformations, and assert the output.
-    # # Example (pseudo-code):
-    # # spark = SparkSession.builder.master("local[*]").appName("UnitTests").getOrCreate()
-    # # input_data = [(...)]
-    # # input_df = spark.createDataFrame(input_data, schema)
-    # # result_df = process_reddit_data(input_df, test_config)
-    # # expected_data = [(...)]
-    # # expected_df = spark.createDataFrame(expected_data, result_schema)
-    # # assert result_df.collect() == expected_df.collect()
-    # # spark.stop()
+    # ... existing test comments ...
     # -------------------------------------------------
 
     run_pipeline()
