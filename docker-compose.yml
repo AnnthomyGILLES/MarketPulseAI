@@ -29,7 +29,6 @@ services:
       - "9042:9042"
     volumes:
       - cassandra-data:/var/lib/cassandra
-      - ./config/database:/config/database
     environment:
       - CASSANDRA_CLUSTER_NAME=market_data_cluster
       - CASSANDRA_ENDPOINT_SNITCH=SimpleSnitch
@@ -53,7 +52,7 @@ services:
   cassandra-init:
     image: cassandra:latest
     volumes:
-      - ./config/database:/config/database
+      - ./config/cassandra:/config/cassandra
     command: >
       bash -c "
         echo 'Waiting for Cassandra to start...' &&
@@ -61,8 +60,8 @@ services:
           echo 'Cassandra not ready yet - retrying...';
           sleep 5;
         done &&
-        echo 'Initializing Cassandra schema...' &&
-        cqlsh cassandra -f /config/database/cassandra_schema_dev.cql &&
+        echo 'Initializing Cassandra schema from schema.cql...' &&
+        cqlsh cassandra -f /config/cassandra/schema.cql &&
         echo 'Schema initialization complete!'
       "
     networks:
@@ -86,25 +85,24 @@ services:
     environment:
       - SPARK_MODE=master
       - KAFKA_BOOTSTRAP_SERVERS=redpanda:29092
-      - MARKET_DATA_TOPIC=market_data
       - CASSANDRA_HOST=cassandra
       - CASSANDRA_PORT=9042
-      - CASSANDRA_USER=cassandra
-      - CASSANDRA_PASSWORD=cassandra
     networks:
       - kafka-network
     depends_on:
       - redpanda
       - cassandra
+      - cassandra-init
     command: >
       bash -c "
         echo 'Setting up development environment...' &&
-        pip install pyspark kafka-python cassandra-driver pandas matplotlib jupyter yfinance &&
-        mkdir -p /tmp/checkpoints &&
-        chmod 777 /tmp/checkpoints &&
+        pip install --no-cache-dir --upgrade pip &&
+        pip install --no-cache-dir pyspark kafka-python cassandra-driver pandas matplotlib jupyter yfinance vaderSentiment PyYAML loguru pydantic &&
+        mkdir -p /tmp/checkpoints && chmod 777 /tmp/checkpoints &&
+        mkdir -p /opt/bitnami/spark/logs && chmod 777 /opt/bitnami/spark/logs &&
         echo 'Spark development environment ready!' &&
-        echo 'Run your script manually with:' &&
-        echo '/opt/bitnami/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.3.0,com.datastax.spark:spark-cassandra-connector_2.12:3.3.0 /opt/bitnami/spark/src/data_processing/market_data/feature_eng/stock_features.py' &&
+        echo 'Run your Reddit Sentiment script manually with:' &&
+        echo '/opt/bitnami/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1,com.datastax.spark:spark-cassandra-connector_2.12:3.4.1 /opt/bitnami/spark/src/data_processing/reddit_sentiment_analyzer.py' &&
         tail -f /dev/null
       "
 
