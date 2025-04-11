@@ -81,6 +81,7 @@ services:
       - ./src:/opt/bitnami/spark/src
       - ./config:/opt/bitnami/spark/config
       - ./scripts:/opt/bitnami/spark/scripts
+      - ./logs/spark:/opt/bitnami/spark/logs
       - spark-volume:/bitnami
     environment:
       - SPARK_MODE=master
@@ -98,7 +99,6 @@ services:
         echo 'Setting up development environment...' &&
         pip install --no-cache-dir --upgrade pip &&
         pip install --no-cache-dir pyspark kafka-python cassandra-driver pandas matplotlib jupyter yfinance vaderSentiment PyYAML loguru pydantic &&
-        mkdir -p /tmp/checkpoints && chmod 777 /tmp/checkpoints &&
         mkdir -p /opt/bitnami/spark/logs && chmod 777 /opt/bitnami/spark/logs &&
         echo 'Spark development environment ready!' &&
         echo 'Run your Reddit Sentiment script manually with:' &&

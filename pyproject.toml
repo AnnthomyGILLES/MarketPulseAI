@@ -23,6 +23,7 @@ praw = "^7.8.1"
 python-dotenv = "^1.1.0"
 confluent-kafka = "^2.9.0"
 pendulum = "^3.0.0"
+vadersentiment = "^3.3.2"
 
 
 [build-system]

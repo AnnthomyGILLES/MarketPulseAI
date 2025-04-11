@@ -531,69 +531,72 @@ def run_pipeline():
     """Main function to set up and run the Spark pipeline."""
     try:
         # Calculate paths relative to the script location *inside the container*
-        script_path = (
-            Path(__file__).resolve()
-        )  # e.g., /opt/bitnami/spark/src/data_processing/reddit_sentiment_analyzer.py
-        script_dir = script_path.parent  # e.g., /opt/bitnami/spark/src/data_processing
-        # Go up THREE levels from script dir to reach /opt/bitnami/spark (src -> data_processing -> src -> spark root)
-        root_dir = script_dir.parent.parent.parent
-        # Config path should now be correct relative to the container's mapped config volume
+        script_path = Path(__file__).resolve()
+        script_dir = script_path.parent
+        root_dir = (
+            script_dir.parent.parent.parent
+        )  # Should resolve to /opt/bitnami/spark
         config_path = root_dir / "config" / "spark" / "reddit_sentiment_config.yaml"
-        log_dir = (
-            root_dir / "logs" / "spark"
-        )  # Logs will be inside /opt/bitnami/spark/logs
+
+        # Use the log directory created by docker-compose entrypoint: /opt/bitnami/spark/logs
+        log_base_dir = root_dir / "logs"
+        # Ensure the base log directory exists (it should, but check defensively)
+        # We expect this to succeed without permission errors as the entrypoint created it.
+        log_base_dir.mkdir(parents=True, exist_ok=True)
+
+        # Define the log file path *directly within* the base directory
+        log_file_path = (
+            log_base_dir
+            / f"reddit_sentiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        )
 
         # --- Logging Setup ---
-        log_dir.mkdir(parents=True, exist_ok=True)  # Create log dir first
-        log_file_path = (
-            log_dir / f"reddit_sentiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-        )
-        # Remove default logger to avoid duplicate messages if run multiple times in interactive session
-        logger.remove()
-        # Add console logger
+        # We don't need to create log_dir anymore, just use log_file_path
+        logger.remove()  # Remove default logger
+        # Add console logger (initial level, might be updated after config load)
+        initial_console_log_level = "INFO"
         logger.add(
             sink=lambda msg: print(msg, end=""),
-            level="INFO",
+            level=initial_console_log_level,
             format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
         )
-        # Add file logger
+        # Add file logger - this will create the file in the log_base_dir
         logger.add(
             sink=log_file_path,
             level="DEBUG",
-            rotation="10 MB",  # Log DEBUG to file
+            rotation="10 MB",
             format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} | {message}",
-        )  # More detail in file
+        )
 
         logger.info(f"Script path: {script_path}")
+        logger.info(f"Calculated container root directory: {root_dir}")
         logger.info(
-            f"Calculated container root directory: {root_dir}"
-        )  # Log the calculated root
-        logger.info(
-            f"Attempting to load config from: {config_path}"
-        )  # Log the correct target path
+            f"Target log file path: {log_file_path}"
+        )  # Log the actual file path
+        logger.info(f"Attempting to load config from: {config_path}")
 
         # Load Configuration
         config = load_config(config_path)
 
         # Update log level based on config AFTER initial logging setup
-        # Reconfigure console logger level based on config
         logger.remove()  # Remove previous console logger
         logger.add(
             sink=lambda msg: print(msg, end=""),
             level=config.log_level.upper(),
             format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
         )
+        # Re-add file logger to ensure it's configured correctly after potential removals
         logger.add(
             sink=log_file_path,
             level="DEBUG",
-            rotation="10 MB",  # Keep file at DEBUG or adjust as needed
+            rotation="10 MB",
             format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} | {message}",
         )
 
         logger.info("Logging setup complete.")
         logger.info(f"Console log level: {config.log_level.upper()}")
         logger.info(f"Logging DEBUG+ to: {log_file_path}")
-        logger.info(f"Pipeline Configuration: {config.dict()}")  # Log the loaded config
+        logger.info(f"Pipeline Configuration: {config.dict()}")
 
         # Create Spark Session
         spark = create_spark_session(config)
@@ -636,15 +639,31 @@ def run_pipeline():
         logger.info("Streaming query started. Waiting for termination...")
         query.awaitTermination()
 
-    except FileNotFoundError:
-        # Log the path it actually tried
-        logger.exception(f"Configuration file not found. Checked path: {config_path}")
-    except ValueError as e:
-        logger.exception(f"Configuration error: {e}")  # Use exception logger
-    except Exception as e:
+    except PermissionError as e:
+        # Catch PermissionError specifically for logging clarity
+        log_path_str = str(locals().get("log_file_path", "UnknownLogPath"))
         logger.exception(
-            f"An unexpected error occurred in the pipeline: {e}"
-        )  # Use exception logger
+            f"Permission denied trying to access/create log file. Path: {log_path_str}. Error: {e}"
+        )
+    except FileNotFoundError as e:
+        # Check if this is config or log related for better logging
+        config_path_str = str(locals().get("config_path", "UnknownConfigPath"))
+        log_path_str = str(locals().get("log_file_path", "UnknownLogPath"))
+        if config_path_str in str(e):
+            logger.exception(
+                f"Configuration file not found. Checked path: {config_path_str}"
+            )
+        else:
+            logger.exception(
+                f"File not found error during setup (likely log path related). Path: {log_path_str}. Error: {e}"
+            )
+    except ValueError as e:
+        logger.exception(f"Configuration error: {e}")
+    except Exception as e:
+        log_path_str = str(locals().get("log_file_path", "UnknownLogPath"))
+        logger.exception(
+            f"An unexpected error occurred in the pipeline: {e}. Log path involved: {log_path_str}"
+        )
     finally:
         if "spark" in locals() and spark:
             logger.info("Stopping Spark session.")
