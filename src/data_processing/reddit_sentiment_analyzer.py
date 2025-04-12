@@ -61,7 +61,8 @@ class CassandraConfig(BaseModel):
 
 class SparkPipelineConfig(BaseModel):
     app_name: str = "RedditSentimentAnalysis"
-    kafka: KafkaConfig
+    kafka_config_path: str
+    kafka: Optional[KafkaConfig] = None
     cassandra: CassandraConfig
     processing_window_duration: str = "5 minutes"
     watermark_delay_threshold: str = "10 minutes"
@@ -75,11 +76,40 @@ class SparkPipelineConfig(BaseModel):
     # cassandra_write_consistency: str = "LOCAL_QUORUM"
 
 
+def load_kafka_config(config_path: Path) -> KafkaConfig:
+    """Loads Kafka configuration from YAML file."""
+    logger.info(f"Loading Kafka configuration from: {config_path}")
+    if not config_path.exists():
+        logger.error(f"Kafka configuration file not found at {config_path}")
+        raise FileNotFoundError(f"Kafka configuration file not found at {config_path}")
+
+    with open(config_path, "r") as f:
+        raw_config = yaml.safe_load(f)
+
+    try:
+        # Map entries to structure expected by KafkaConfig
+        return KafkaConfig(
+            bootstrap_servers=raw_config["bootstrap_servers"],
+            topics=KafkaTopicConfig(**raw_config["topics"]),
+            consumer_groups=raw_config["consumer_groups"],
+            config=raw_config.get("config", {}),
+            producer=raw_config.get("producer", {}),
+            consumer=raw_config.get("consumer", {}),
+            connect=raw_config.get("connect", {}),
+        )
+    except KeyError as e:
+        logger.error(f"Missing Kafka configuration key: {e} in {config_path}")
+        raise ValueError(f"Missing Kafka configuration key: {e}") from e
+    except Exception as e:
+        logger.error(f"Error parsing Kafka configuration file {config_path}: {e}")
+        raise
+
+
 def load_config(
     config_path: Path,
 ) -> SparkPipelineConfig:
-    """Loads Kafka, Cassandra, and Spark configurations from YAML."""
-    logger.info(f"Loading configuration from: {config_path}")
+    """Loads Spark and Cassandra configurations from YAML, and references Kafka config."""
+    logger.info(f"Loading Spark pipeline configuration from: {config_path}")
     if not config_path.exists():
         logger.error(f"Configuration file not found at {config_path}")
         raise FileNotFoundError(f"Configuration file not found at {config_path}")
@@ -89,9 +119,22 @@ def load_config(
 
     # Validate and parse different sections
     try:
-        kafka_conf = KafkaConfig(**raw_config["kafka"])
+        # Get path to Kafka config and resolve it relative to the main config file
+        kafka_config_path = raw_config.get("kafka_config_path")
+        if kafka_config_path:
+            # Resolve relative path from the main config file's directory
+            kafka_config_full_path = config_path.parent / kafka_config_path
+            logger.info(f"Loading Kafka config from: {kafka_config_full_path}")
+            kafka_conf = load_kafka_config(kafka_config_full_path)
+        else:
+            logger.warning(
+                "No kafka_config_path specified, Kafka features will be unavailable"
+            )
+            kafka_conf = None
+
         # Expect Cassandra config under a 'cassandra' key in the YAML
         cassandra_conf = CassandraConfig(**raw_config["cassandra"])
+
         # Expect Spark settings under a 'spark' key or at the root
         # Assuming spark settings like app_name, window, watermark, checkpoint base, log_level are top-level or under a 'spark' key
         # Let's assume they are under a 'spark_settings' key for clarity
@@ -113,6 +156,7 @@ def load_config(
             app_name=spark_settings.get(
                 "app_name", "RedditSentimentAnalysis"
             ),  # Allow override
+            kafka_config_path=kafka_config_path,
             kafka=kafka_conf,
             cassandra=cassandra_conf,
             processing_window_duration=spark_settings.get(
@@ -151,21 +195,11 @@ def load_config(
 def create_spark_session(config: SparkPipelineConfig) -> SparkSession:
     """Creates and configures the SparkSession."""
     logger.info(f"Creating Spark session: {config.app_name}")
-    # Use configured packages if available, otherwise default (or remove defaults if strictly from config)
-    cassandra_package = getattr(
-        config,
-        "spark_cassandra_package",
-        "com.datastax.spark:spark-cassandra-connector_2.12:3.4.1",
-    )
-    kafka_package = getattr(
-        config,
-        "spark_kafka_package",
-        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1",
-    )
+    cassandra_package = config.spark_cassandra_package
+    kafka_package = config.spark_kafka_package
 
     spark = (
         SparkSession.builder.appName(config.app_name)
-        # Use the generated full checkpoint path now stored in checkpoint_location_base_path
         .config(
             "spark.sql.streaming.checkpointLocation",
             config.checkpoint_location_base_path,
@@ -173,9 +207,7 @@ def create_spark_session(config: SparkPipelineConfig) -> SparkSession:
         .config("spark.jars.packages", f"{cassandra_package},{kafka_package}")
         .config("spark.cassandra.connection.host", config.cassandra.connection_host)
         .config("spark.sql.session.timeZone", "UTC")
-        .config(
-            "spark.sql.streaming.schemaInference", "true"
-        )  # Consider setting to false and defining schema for robustness
+        .config("spark.sql.streaming.schemaInference", "true")
         .config("spark.log.level", config.log_level)
         .getOrCreate()
     )
@@ -318,6 +350,10 @@ get_sentiment_udf = F.udf(get_sentiment, sentiment_schema)
 
 def read_from_kafka(spark: SparkSession, config: SparkPipelineConfig) -> DataFrame:
     """Reads data from the validated Kafka topics."""
+    if not config.kafka:
+        logger.error("Kafka configuration is not available. Cannot read from Kafka.")
+        raise ValueError("Kafka configuration is not available")
+
     kafka_brokers = ",".join(config.kafka.bootstrap_servers)
     # Read from both validated posts and comments topics
     topics_to_subscribe = f"{config.kafka.topics.social_media_reddit_validated},{config.kafka.topics.social_media_reddit_comments_validated}"
@@ -533,25 +569,10 @@ def run_pipeline():
         # Calculate paths relative to the script location *inside the container*
         script_path = Path(__file__).resolve()
         script_dir = script_path.parent
-        root_dir = (
-            script_dir.parent.parent.parent
-        )  # Should resolve to /opt/bitnami/spark
+        root_dir = script_dir.parent.parent  # Should resolve to /opt/bitnami/spark
         config_path = root_dir / "config" / "spark" / "reddit_sentiment_config.yaml"
 
-        # Use the log directory created by docker-compose entrypoint: /opt/bitnami/spark/logs
-        log_base_dir = root_dir / "logs"
-        # Ensure the base log directory exists (it should, but check defensively)
-        # We expect this to succeed without permission errors as the entrypoint created it.
-        log_base_dir.mkdir(parents=True, exist_ok=True)
-
-        # Define the log file path *directly within* the base directory
-        log_file_path = (
-            log_base_dir
-            / f"reddit_sentiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-        )
-
         # --- Logging Setup ---
-        # We don't need to create log_dir anymore, just use log_file_path
         logger.remove()  # Remove default logger
         # Add console logger (initial level, might be updated after config load)
         initial_console_log_level = "INFO"
@@ -560,19 +581,9 @@ def run_pipeline():
             level=initial_console_log_level,
             format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
         )
-        # Add file logger - this will create the file in the log_base_dir
-        logger.add(
-            sink=log_file_path,
-            level="DEBUG",
-            rotation="10 MB",
-            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} | {message}",
-        )
 
         logger.info(f"Script path: {script_path}")
         logger.info(f"Calculated container root directory: {root_dir}")
-        logger.info(
-            f"Target log file path: {log_file_path}"
-        )  # Log the actual file path
         logger.info(f"Attempting to load config from: {config_path}")
 
         # Load Configuration
@@ -585,18 +596,17 @@ def run_pipeline():
             level=config.log_level.upper(),
             format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
         )
-        # Re-add file logger to ensure it's configured correctly after potential removals
-        logger.add(
-            sink=log_file_path,
-            level="DEBUG",
-            rotation="10 MB",
-            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} | {message}",
-        )
 
         logger.info("Logging setup complete.")
         logger.info(f"Console log level: {config.log_level.upper()}")
-        logger.info(f"Logging DEBUG+ to: {log_file_path}")
-        logger.info(f"Pipeline Configuration: {config.dict()}")
+
+        # Log config summary but exclude full kafka details (too verbose)
+        config_dict = config.dict()
+        if config.kafka:
+            config_dict["kafka"] = (
+                "Loaded successfully - see kafka_config_path for details"
+            )
+        logger.info(f"Pipeline Configuration: {config_dict}")
 
         # Create Spark Session
         spark = create_spark_session(config)
@@ -608,6 +618,12 @@ def run_pipeline():
         logger.warning(
             "Automatic schema creation/validation is not implemented. Apply schema manually if needed."
         )
+
+        # Verify Kafka config is available
+        if not config.kafka:
+            raise ValueError(
+                "Kafka configuration is required but was not loaded. Check kafka_config_path."
+            )
 
         # Read from Kafka
         kafka_stream_df = read_from_kafka(spark, config)
@@ -639,31 +655,19 @@ def run_pipeline():
         logger.info("Streaming query started. Waiting for termination...")
         query.awaitTermination()
 
-    except PermissionError as e:
-        # Catch PermissionError specifically for logging clarity
-        log_path_str = str(locals().get("log_file_path", "UnknownLogPath"))
-        logger.exception(
-            f"Permission denied trying to access/create log file. Path: {log_path_str}. Error: {e}"
-        )
     except FileNotFoundError as e:
-        # Check if this is config or log related for better logging
+        # Check if this is config related for better logging
         config_path_str = str(locals().get("config_path", "UnknownConfigPath"))
-        log_path_str = str(locals().get("log_file_path", "UnknownLogPath"))
         if config_path_str in str(e):
             logger.exception(
                 f"Configuration file not found. Checked path: {config_path_str}"
             )
         else:
-            logger.exception(
-                f"File not found error during setup (likely log path related). Path: {log_path_str}. Error: {e}"
-            )
+            logger.exception(f"File not found error during setup: {e}")
     except ValueError as e:
         logger.exception(f"Configuration error: {e}")
     except Exception as e:
-        log_path_str = str(locals().get("log_file_path", "UnknownLogPath"))
-        logger.exception(
-            f"An unexpected error occurred in the pipeline: {e}. Log path involved: {log_path_str}"
-        )
+        logger.exception(f"An unexpected error occurred in the pipeline: {e}")
     finally:
         if "spark" in locals() and spark:
             logger.info("Stopping Spark session.")
