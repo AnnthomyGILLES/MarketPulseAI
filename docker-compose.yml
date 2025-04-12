@@ -99,7 +99,6 @@ services:
         echo 'Setting up development environment...' &&
         pip install --no-cache-dir --upgrade pip &&
         pip install --no-cache-dir pyspark kafka-python cassandra-driver pandas matplotlib jupyter yfinance vaderSentiment PyYAML loguru pydantic &&
-        mkdir -p /opt/bitnami/spark/logs && chmod 777 /opt/bitnami/spark/logs &&
         echo 'Spark development environment ready!' &&
         echo 'Run your Reddit Sentiment script manually with:' &&
         echo '/opt/bitnami/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1,com.datastax.spark:spark-cassandra-connector_2.12:3.4.1 /opt/bitnami/spark/src/data_processing/reddit_sentiment_analyzer.py' &&
