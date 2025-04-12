@@ -1,71 +1,7 @@
 # Configuration for the Spark Reddit Sentiment Analysis Pipeline
 
-# Kafka Configuration (Required by the Spark PipelineConfig model)
-kafka:
-  # List of Kafka broker addresses
-  bootstrap_servers:
-    - "kafka:9092" # Example: Use your actual Kafka broker address(es)
-    # - "kafka2:9092"
-    # - "kafka3:9092"
-
-  # Kafka Topic Names (Ensure these match your actual topic names)
-  topics:
-    # Input topics (raw data - needed by KafkaConfig model, though script reads validated)
-    social_media_reddit_posts: "social-media-reddit-posts-raw"
-    social_media_reddit_comments: "social-media-reddit-comments-raw"
-    social_media_reddit_symbols: "social-media-reddit-symbols-raw" # Not read by this script
-
-    # Input topics (validated data - THESE ARE READ by the script)
-    social_media_reddit_validated: "social-media-reddit-validated"
-    social_media_reddit_comments_validated: "social-media-reddit-comments-validated"
-    # social_media_reddit_symbols_validated: "social-media-reddit-symbols-validated" # Not read by this script
-
-    # Output topics (validation output - needed by KafkaConfig model, not used by this script)
-    social_media_reddit_invalid: "social-media-reddit-invalid"
-    social_media_reddit_error: "social-media-reddit-error"
-
-    # Other topics (needed by KafkaConfig model, not used by this script)
-    social_media_reddit_rising_historical: "social-media-reddit-rising-historical"
-    market_data_raw: "market-data-raw"
-    market_data_validated: "market-data-validated"
-    market_data_error: "market-data-error"
-    sentiment_aggregated: "sentiment-aggregated-output" # Note: This script writes to Cassandra, not this topic
-
-  # Consumer Groups (Required by KafkaConfig model, not directly used by Spark reader)
-  consumer_groups:
-    reddit_validation: "reddit-validation-group"
-    reddit_comments_validation: "reddit-comments-validation-group"
-    # Add other groups if defined/needed by the model
-
-  # Generic Kafka Client Config (Required by KafkaConfig model)
-  config:
-    # Example: Add any global Kafka client settings if needed
-    # security.protocol: "SASL_SSL"
-    # sasl.mechanisms: "PLAIN"
-    # sasl.username: "user"
-    # sasl.password: "password"
-    {} # Keep empty if no global settings needed
-
-  # Kafka Producer Config (Required by KafkaConfig model, not used by this script)
-  producer:
-    acks: 1
-    # linger.ms: 5
-    # batch.size: 16384
-    {} # Keep empty or add producer defaults if needed elsewhere
-
-  # Kafka Consumer Config (Required by KafkaConfig model, not directly used by Spark reader)
-  consumer:
-    auto.offset.reset: "earliest"
-    enable.auto.commit: true
-    # session.timeout.ms: 10000
-    # max.poll.interval.ms: 300000
-    {} # Keep empty or add consumer defaults if needed elsewhere
-
-  # Kafka Connect Config (Required by KafkaConfig model, not used by this script)
-  connect:
-    # Example Connect settings if needed by model
-    # rest.port: 8083
-    {}
+# Reference to Kafka config file (no need to duplicate Kafka config)
+kafka_config_path: "../kafka/kafka_config.yaml"
 
 # Cassandra Configuration
 cassandra:
