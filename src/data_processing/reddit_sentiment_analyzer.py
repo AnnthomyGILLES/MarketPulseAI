@@ -1,4 +1,5 @@
 import re
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -22,6 +23,12 @@ from pyspark.sql.types import (
     FloatType,
 )
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+
+# Environment variables with defaults
+CASSANDRA_PORT = os.environ.get("CASSANDRA_PORT", "9042")
+CASSANDRA_USER = os.environ.get("CASSANDRA_USER", "cassandra")
+CASSANDRA_PASSWORD = os.environ.get("CASSANDRA_PASSWORD", "cassandra")
 
 
 # --- Configuration Loading ---
@@ -57,6 +64,9 @@ class CassandraConfig(BaseModel):
     keyspace: str
     table: str
     connection_host: str
+    connection_port: str = CASSANDRA_PORT
+    auth_username: Optional[str] = CASSANDRA_USER
+    auth_password: Optional[str] = CASSANDRA_PASSWORD
 
 
 class SparkPipelineConfig(BaseModel):
@@ -198,7 +208,7 @@ def create_spark_session(config: SparkPipelineConfig) -> SparkSession:
     cassandra_package = config.spark_cassandra_package
     kafka_package = config.spark_kafka_package
 
-    spark = (
+    spark_builder = (
         SparkSession.builder.appName(config.app_name)
         .config(
             "spark.sql.streaming.checkpointLocation",
@@ -206,11 +216,28 @@ def create_spark_session(config: SparkPipelineConfig) -> SparkSession:
         )
         .config("spark.jars.packages", f"{cassandra_package},{kafka_package}")
         .config("spark.cassandra.connection.host", config.cassandra.connection_host)
+        .config("spark.cassandra.connection.port", config.cassandra.connection_port)
+        .config("spark.streaming.kafka.consumer.cache.enabled", "false")
+        .config("spark.streaming.kafka.consumer.poll.ms", "60000")
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.sql.streaming.schemaInference", "true")
         .config("spark.log.level", config.log_level)
-        .getOrCreate()
     )
+
+    # Add authentication if credentials are provided
+    if config.cassandra.auth_username and config.cassandra.auth_password:
+        spark_builder = (
+            spark_builder.config(
+                "spark.cassandra.auth.username", config.cassandra.auth_username
+            )
+            .config(
+                "spark.cassandra.auth.password", config.cassandra.auth_password
+            )
+        )
+
+    # Create the session
+    spark = spark_builder.getOrCreate()
+    
     logger.info("Spark session created successfully.")
     logger.info(f"Spark UI: {spark.sparkContext.uiWebUrl}")
     return spark
@@ -546,13 +573,23 @@ def write_to_cassandra(df: DataFrame, epoch_id: int, config: SparkPipelineConfig
     # Use configured consistency level if available
     consistency_level = getattr(config, "cassandra_write_consistency", "LOCAL_QUORUM")
     logger.debug(f"Using Cassandra write consistency level: {consistency_level}")
+    
     try:
-        df.write.format("org.apache.spark.sql.cassandra").options(
-            table=config.cassandra.table, keyspace=config.cassandra.keyspace
-        ).mode("append").option(
-            "spark.cassandra.output.consistency.level",
-            consistency_level,  # Use variable
-        ).save()
+        # Configure Cassandra connection options
+        cassandra_options = {
+            "keyspace": config.cassandra.keyspace,
+            "table": config.cassandra.table,
+            "spark.cassandra.connection.host": config.cassandra.connection_host,
+            "spark.cassandra.connection.port": config.cassandra.connection_port,
+            "spark.cassandra.output.consistency.level": consistency_level,
+        }
+        
+        # Add authentication if provided
+        if config.cassandra.auth_username and config.cassandra.auth_password:
+            cassandra_options["spark.cassandra.auth.username"] = config.cassandra.auth_username
+            cassandra_options["spark.cassandra.auth.password"] = config.cassandra.auth_password
+            
+        df.write.format("org.apache.spark.sql.cassandra").options(**cassandra_options).mode("append").save()
         logger.info(f"Batch {epoch_id} written successfully.")
     except Exception as e:
         logger.error(f"Error writing batch {epoch_id} to Cassandra: {e}", exc_info=True)
