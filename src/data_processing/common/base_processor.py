@@ -1,7 +1,5 @@
-# src/data_processing/common/base_processor.py
-import os
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 import yaml
 from loguru import logger
@@ -35,7 +33,24 @@ class BaseStreamProcessor:
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
         with open(config_file, "r") as f:
-            return yaml.safe_load(f)
+            config = yaml.safe_load(f)
+
+        # Load Kafka config if a path is specified
+        if "kafka_config_path" in config:
+            kafka_config_path = config["kafka_config_path"]
+            kafka_config_file = Path(kafka_config_path)
+
+            if not kafka_config_file.exists():
+                logger.error(f"Kafka configuration file not found: {kafka_config_path}")
+                raise FileNotFoundError(f"Kafka configuration file not found: {kafka_config_path}")
+
+            with open(kafka_config_file, "r") as f:
+                kafka_config = yaml.safe_load(f)
+
+            # Add Kafka config to main config
+            config["kafka"] = kafka_config
+
+        return config
 
     def _init_spark_session(self) -> SparkSession:
         """Initialize and configure the Spark session.
@@ -95,6 +110,7 @@ class BaseStreamProcessor:
             DataFrame with raw Kafka data
         """
         kafka_config = self.config.get("kafka", {})
+        # Use the bootstrap_servers from Kafka config
         bootstrap_servers = ",".join(kafka_config.get("bootstrap_servers", ["localhost:9092"]))
 
         logger.info(f"Reading from Kafka topics: {topics}")
@@ -107,6 +123,7 @@ class BaseStreamProcessor:
             .option("failOnDataLoss", "false")
             .load()
         )
+
 
     def write_to_cassandra(self, df: DataFrame, keyspace: str, table: str,
                            checkpoint_location: str) -> None:
