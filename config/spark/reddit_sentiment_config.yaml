@@ -5,26 +5,21 @@ kafka_config_path: "../kafka/kafka_config.yaml"
 
 # Cassandra Configuration
 cassandra:
-  keyspace: "marketpulse" # Target Cassandra keyspace
-  table: "reddit_sentiment_aggregate" # Target Cassandra table
-  connection_host: "cassandra" # Cassandra node hostname or IP address (or comma-separated list: "node1,node2")
+  keyspace: "marketpulse"
+  table: "reddit_sentiment_aggregate"
+  connection_host: "cassandra"
 
 # Spark Application Settings
 spark_settings:
-  app_name: "RedditSentimentAnalysis" # Name for the Spark application
-  log_level: "INFO" # Spark log level (ERROR, WARN, INFO, DEBUG)
+  app_name: "RedditSentimentAnalysis"
+  log_level: "INFO"
 
   # Spark Streaming Settings
-  processing_window_duration: "5 minutes" # Duration for tumbling window aggregation (e.g., "1 minute", "10 minutes")
-  watermark_delay_threshold: "10 minutes" # How long to wait for late data before finalizing window
+  processing_window_duration: "1 minute"
+  watermark_delay_threshold: "3 minutes"
 
   # Checkpointing Configuration
-  # IMPORTANT: Use a persistent, fault-tolerant filesystem path (HDFS, S3, Azure Blob, persistent volume)
-  # This path is the BASE directory; unique subdirectories will be created per run.
-  checkpoint_location_base_path: "/opt/bitnami/spark/checkpoints/reddit_sentiment" # Example using local path within container (adjust if needed)
-  # Example for HDFS: "hdfs://namenode:8020/spark_checkpoints/marketpulse"
-  # Example for S3: "s3a://your-bucket/spark_checkpoints/marketpulse"
-
+  checkpoint_location_base_path: "/opt/bitnami/spark/checkpoints/reddit_sentiment"
 
   # --- Optional Settings ---
 
@@ -32,5 +27,5 @@ spark_settings:
   # spark_cassandra_package: "com.datastax.spark:spark-cassandra-connector_2.12:3.4.1"
   # spark_kafka_package: "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1"
 
-  # Cassandra Write Consistency (Uncomment to override default 'LOCAL_QUORUM')
-  # cassandra_write_consistency: "ONE" # Options: ANY, ONE, TWO, THREE, QUORUM, LOCAL_QUORUM, EACH_QUORUM, LOCAL_ONE, ALL 
+  # Cassandra Write Consistenc
+  cassandra_write_consistency: "ANY" # Options: ANY, ONE, TWO, THREE, QUORUM, LOCAL_QUORUM, EACH_QUORUM, LOCAL_ONE, ALL
