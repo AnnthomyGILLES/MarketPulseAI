@@ -1,14 +1,17 @@
 # src/data_processing/stock/stock_processor.py
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from loguru import logger
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import col, from_json
 from pyspark.sql.types import (
-    StructType, StructField, TimestampType, DoubleType,
-    LongType, StringType
+    StructType,
+    StructField,
+    TimestampType,
+    DoubleType,
+    LongType,
+    StringType,
 )
 
 from src.data_processing.common.base_processor import BaseStreamProcessor
@@ -32,15 +35,17 @@ class StockDataProcessor(BaseStreamProcessor):
         Returns:
             Spark schema for stock data
         """
-        return StructType([
-            StructField("date", TimestampType(), False),
-            StructField("open", DoubleType(), False),
-            StructField("high", DoubleType(), False),
-            StructField("low", DoubleType(), False),
-            StructField("close", DoubleType(), False),
-            StructField("volume", LongType(), False),
-            StructField("Name", StringType(), False),
-        ])
+        return StructType(
+            [
+                StructField("date", TimestampType(), False),
+                StructField("open", DoubleType(), False),
+                StructField("high", DoubleType(), False),
+                StructField("low", DoubleType(), False),
+                StructField("close", DoubleType(), False),
+                StructField("volume", LongType(), False),
+                StructField("Name", StringType(), False),
+            ]
+        )
 
     def validate_data(self, kafka_stream: DataFrame) -> DataFrame:
         """Parse and validate the incoming stock data.
@@ -121,13 +126,12 @@ class StockDataProcessor(BaseStreamProcessor):
 
             # Write to Cassandra
             query = self.write_to_cassandra(
-                feature_stream,
-                cassandra_keyspace,
-                cassandra_table,
-                checkpoint_location
+                feature_stream, cassandra_keyspace, cassandra_table, checkpoint_location
             )
 
-            logger.info("Stock data processing pipeline started, waiting for termination")
+            logger.info(
+                "Stock data processing pipeline started, waiting for termination"
+            )
             query.awaitTermination()
 
         except Exception as e:
