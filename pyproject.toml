@@ -20,6 +20,8 @@ dependencies = [
     "python-dotenv<2.0.0,>=1.1.0",
     "vadersentiment>=3.3.2",
     "typer>=0.15.2",
+    "pendulum>=3.0.0",
+    "confluent-kafka>=2.9.0",
 ]
 name = "marketpulseai"
 version = "0.1.0"
