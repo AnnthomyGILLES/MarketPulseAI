@@ -11,20 +11,25 @@ spark_settings:
 # Reference to Kafka config
 kafka_config_path: "/opt/bitnami/spark/config/kafka/kafka_config.yaml"
 
-# Cassandra configuration
-cassandra:
-  keyspace: "social_media"
-  table: "reddit_sentiment"
-  connection_host: "cassandra"
-  connection_port: "9042"
-  auth_username: "cassandra"
-  auth_password: "cassandra"
+# MongoDB configuration
+mongodb:
+  database: "social_media"
+  collection: "reddit_sentiment"
+  connection_host: "mongodb"
+  connection_port: "27017"
+  auth_username: "mongodb_user"
+  auth_password: "mongodb_password"
+  
+  # MongoDB write concern (w: "majority", j: true ensures data is written to disk)
+  write_concern: "majority"
+  
+  # Optional settings
+  connection_options:
+    replicaSet: "rs0"
+    maxPoolSize: 100
+    connectTimeoutMS: 10000
+    socketTimeoutMS: 10000
 
-  # --- Optional Settings ---
-
-  # Spark Package Versions (Uncomment and adjust if you want to control versions via config)
-  # spark_cassandra_package: "com.datastax.spark:spark-cassandra-connector_2.12:3.4.1"
-  # spark_kafka_package: "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1"
-
-  # Cassandra Write Consistenc
-  cassandra_write_consistency: "ANY" # Options: ANY, ONE, TWO, THREE, QUORUM, LOCAL_QUORUM, EACH_QUORUM, LOCAL_ONE, ALL
+# Spark Package Versions
+spark_mongodb_package: "org.mongodb.spark:mongo-spark-connector_2.12:10.1.1"
+spark_kafka_package: "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1"
