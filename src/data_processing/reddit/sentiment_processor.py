@@ -1,5 +1,5 @@
 # src/data_processing/reddit/sentiment_processor.py
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from loguru import logger
 from pyspark.sql import DataFrame
@@ -92,25 +92,6 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         symbols = [s for s in symbols if len(s) > 0 and s.isupper()]
         return symbols if symbols else None
 
-    def _get_sentiment(self, text: str) -> Optional[Dict[str, float]]:
-        """Calculate sentiment using VADER.
-
-        Args:
-            text: Text to analyze
-
-        Returns:
-            Dictionary with sentiment score and magnitude
-        """
-        if text is None:
-            return None
-
-        try:
-            vs = self.sentiment_analyzer.polarity_scores(text)
-            return {"score": vs["compound"], "magnitude": abs(vs["compound"])}
-        except Exception as e:
-            logger.warning(f"Sentiment analysis failed: {str(e)[:100]}")
-            return None
-
     def process_reddit_data(self, df: DataFrame) -> DataFrame:
         """Process Reddit data for sentiment analysis.
 
@@ -122,15 +103,51 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         """
         logger.info("Processing Reddit data")
 
-        # Register UDFs
-        clean_text_udf = F.udf(self._clean_text, StringType())
-        extract_symbols_udf = F.udf(self._extract_symbols, ArrayType(StringType()))
+        # Define UDF logic locally to avoid capturing 'self'
+        def clean_text_local(text: str) -> Optional[str]:
+            if text is None:
+                return None
+            import re
+            text = text.lower()
+            text = re.sub(r"http\S+|www\S+|https\S+", "", text, flags=re.MULTILINE)
+            text = re.sub(r"\$[a-zA-Z0-9_]+", "", text)
+            text = re.sub(r"@[a-zA-Z0-9_]+", "", text)
+            text = re.sub(r"[^a-zA-Z\s]", "", text)
+            text = re.sub(r"\s+", " ", text).strip()
+            return text if text else None
+
+        def extract_symbols_local(text: str) -> Optional[List[str]]:
+            if text is None:
+                return None
+            import re
+            potential_symbols = re.findall(r"\b([A-Z]{1,5})\b|\$([A-Z]{1,5})\b", text)
+            symbols = list(set(s for tup in potential_symbols for s in tup if s))
+            symbols = [s for s in symbols if len(s) > 0 and s.isupper()]
+            return symbols if symbols else None
+
+        # Create a fresh analyzer object in each worker for sentiment
+        def get_sentiment_local(text):
+            if text is None:
+                return None
+            try:
+                # Ensure vaderSentiment is imported on the worker
+                from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+                analyzer = SentimentIntensityAnalyzer()
+                vs = analyzer.polarity_scores(text)
+                return {"score": vs["compound"], "magnitude": abs(vs["compound"])}
+            except Exception as e:
+                logger.warning(f"Sentiment analysis failed for text: {text[:50]}... Error: {e}")
+                return None
+
+        # Register UDFs using the local functions
+        clean_text_udf = F.udf(clean_text_local, StringType())
+        extract_symbols_udf = F.udf(extract_symbols_local, ArrayType(StringType()))
 
         sentiment_schema = StructType([
             StructField("score", FloatType(), True),
             StructField("magnitude", FloatType(), True),
         ])
-        get_sentiment_udf = F.udf(self._get_sentiment, sentiment_schema)
+        get_sentiment_udf = F.udf(get_sentiment_local, sentiment_schema)
 
         # Parse JSON value from Kafka
         parsed_df = df.select(
@@ -333,32 +350,69 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         from pyspark.sql import SparkSession
 
         # Get package dependencies from config
-        mongodb_package = self.config.get("mongodb", {}).get(
+        mongodb_package = self.config.get(
             "spark_mongodb_package", "org.mongodb.spark:mongo-spark-connector_2.12:10.1.1"
         )
-        
-        kafka_package = self.config.get("mongodb", {}).get(
+        kafka_package = self.config.get(
             "spark_kafka_package", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1"
         )
+        
+        # Combine packages
+        required_packages = f"{kafka_package},{mongodb_package}"
+        logger.info(f"Attempting to configure Spark session with packages: {required_packages}")
 
-        # Build the Spark session with MongoDB connector
+        # Build the Spark session
         builder = (
             SparkSession.builder.appName(self.config.get("app_name", "RedditSentimentAnalysis"))
-            .config("spark.jars.packages", f"{kafka_package},{mongodb_package}")
-            .config("spark.mongodb.output.uri", f"mongodb://{self.config['mongodb']['connection_host']}:{self.config['mongodb']['connection_port']}")
+            .config("spark.jars.packages", required_packages)
+            .config("spark.task.interruption.on.shutdown", "false")
         )
+        
+        # Configure MongoDB URI (handle authentication directly in URI if provided)
+        mongodb_config = self.config.get("mongodb", {})
+        mongo_host = mongodb_config.get('connection_host')
+        mongo_port = mongodb_config.get('connection_port')
+        
+        if mongodb_config.get("auth_username") and mongodb_config.get("auth_password"):
+            auth_user = mongodb_config['auth_username']
+            auth_pass = mongodb_config['auth_password']
+            # Construct URI with auth credentials
+            mongo_uri_base = f"mongodb://{auth_user}:{auth_pass}@{mongo_host}:{mongo_port}"
+            # Setting both input and output URIs is good practice
+            builder = builder.config("spark.mongodb.input.uri", mongo_uri_base) 
+            builder = builder.config("spark.mongodb.output.uri", mongo_uri_base)
+        else:
+            # Construct URI without auth
+            mongo_uri_base = f"mongodb://{mongo_host}:{mongo_port}"
+            builder = builder.config("spark.mongodb.input.uri", mongo_uri_base) 
+            builder = builder.config("spark.mongodb.output.uri", mongo_uri_base)
 
         # Set write concern if specified
-        if "write_concern" in self.config.get("mongodb", {}):
-            builder = builder.config("spark.mongodb.output.writeConcern", self.config["mongodb"]["write_concern"])
+        if "write_concern" in mongodb_config:
+            builder = builder.config("spark.mongodb.output.writeConcern", mongodb_config["write_concern"])
 
-        # Apply any additional MongoDB configurations
+        # Apply any additional Spark configurations from spark_settings
         for key, value in self.config.get("spark_settings", {}).items():
-            if key.startswith("spark."):
+            # Avoid overriding packages or MongoDB URIs set above
+            if key.startswith("spark.") and key not in ["spark.jars.packages", "spark.mongodb.input.uri", "spark.mongodb.output.uri"]: 
                 builder = builder.config(key, value)
 
+        # Get or create the session
+        logger.info("Getting or creating Spark session...")
+        spark = builder.getOrCreate()
+        
+        # Log actual packages configured in the active session for verification
+        actual_packages = spark.conf.get("spark.jars.packages", "Not Set")
+        logger.info(f"Active Spark session configured with packages: {actual_packages}")
+        
+        # Warn if the required packages aren't in the active session's config
+        if mongodb_package not in actual_packages or kafka_package not in actual_packages:
+             logger.warning(f"Required packages ('{required_packages}') may not be set in the active Spark session ('{actual_packages}'). "
+                            "This usually means the session was created *before* this processor started, without the necessary packages. "
+                            "Ensure packages are configured during the initial SparkSession creation.")
+
         # Return the configured Spark session
-        return builder.getOrCreate()
+        return spark
 
     def _create_kafka_stream(self) -> DataFrame:
         """Create a Kafka stream from configured topics.
@@ -366,11 +420,14 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         Returns:
             DataFrame with raw Kafka data
         """
-        kafka_config = self.config.get("kafka", {})
-        topics = kafka_config.get("topics", "")
+        # Use only validated topics
+        topics = [
+            "social-media-reddit-posts-validated",
+            "social-media-reddit-comments-validated",
+            "social-media-reddit-symbols-validated"
+        ]
         
-        if isinstance(topics, list):
-            topics = ",".join(topics)
+        topics_str = ",".join(topics)
         
-        logger.info(f"Creating Kafka stream for topics: {topics}")
-        return self.read_from_kafka(topics)
+        logger.info(f"Creating Kafka stream for topics: {topics_str}")
+        return self.read_from_kafka(topics_str)

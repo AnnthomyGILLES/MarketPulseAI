@@ -69,27 +69,28 @@ class BaseStreamProcessor:
             .config("spark.streaming.kafka.consumer.poll.ms", "60000")
         )
 
-        # Add Cassandra configurations
-        cassandra_config = self.config.get("cassandra", {})
-        if cassandra_config:
-            host = cassandra_config.get("connection_host", "localhost")
-            port = cassandra_config.get("connection_port", "9042")
-            spark_builder = spark_builder.config("spark.cassandra.connection.host", host)
-            spark_builder = spark_builder.config("spark.cassandra.connection.port", port)
+        # Add MongoDB configurations if present
+        mongodb_config = self.config.get("mongodb", {})
+        if mongodb_config:
+            host = mongodb_config.get("host")
+            port = mongodb_config.get("port")
+            database = mongodb_config.get("database")
+            username = mongodb_config.get("username")
+            password = mongodb_config.get("password")
 
-            # Add authentication if provided
-            username = cassandra_config.get("auth_username")
-            password = cassandra_config.get("auth_password")
+            mongo_uri = f"mongodb://{host}:{port}/{database}"
             if username and password:
-                spark_builder = (
-                    spark_builder.config("spark.cassandra.auth.username", username)
-                    .config("spark.cassandra.auth.password", password)
-                )
+                mongo_uri = f"mongodb://{username}:{password}@{host}:{port}/{database}"
+            
+            # Add MongoDB related Spark configurations if necessary
+            spark_builder = spark_builder.config("spark.mongodb.output.uri", mongo_uri)
+            spark_builder = spark_builder.config("spark.mongodb.input.uri", mongo_uri)
+
 
         # Add required packages
         packages = [
             "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1",
-            "com.datastax.spark:spark-cassandra-connector_2.12:3.4.1"
+            "org.mongodb.spark:mongo-spark-connector_2.12:10.1.1"
         ]
         spark_builder = spark_builder.config("spark.jars.packages", ",".join(packages))
 
@@ -111,7 +112,7 @@ class BaseStreamProcessor:
         """
         kafka_config = self.config.get("kafka", {})
         # Use the bootstrap_servers from Kafka config
-        bootstrap_servers = ",".join(kafka_config.get("bootstrap_servers", ["localhost:9092"]))
+        bootstrap_servers = ",".join(kafka_config.get("bootstrap_servers_container"))
 
         logger.info(f"Reading from Kafka topics: {topics}")
         return (
@@ -125,37 +126,56 @@ class BaseStreamProcessor:
         )
 
 
-    def write_to_cassandra(self, df: DataFrame, keyspace: str, table: str,
-                           checkpoint_location: str) -> None:
-        """Write streaming DataFrame to Cassandra.
+    def write_to_mongodb(self, df: DataFrame, database: str, collection: str,
+                           checkpoint_location: str, output_mode: str = "append") -> None:
+        """Write streaming DataFrame to MongoDB.
 
         Args:
             df: DataFrame to write
-            keyspace: Cassandra keyspace
-            table: Cassandra table
+            database: MongoDB database name
+            collection: MongoDB collection name
             checkpoint_location: Checkpoint directory path
+            output_mode: Spark Structured Streaming output mode (e.g., "append", "complete", "update")
         """
-        logger.info(f"Writing data to Cassandra {keyspace}.{table}")
+        logger.info(f"Writing data to MongoDB {database}.{collection}")
 
-        cassandra_config = self.config.get("cassandra", {})
-        cassandra_options = {
-            "keyspace": keyspace,
-            "table": table,
-            "checkpointLocation": checkpoint_location,
-        }
+        mongodb_config = self.config.get("mongodb", {})
+        host = mongodb_config.get("host")
+        port = mongodb_config.get("port")
+        username = mongodb_config.get("username")
+        password = mongodb_config.get("password")
 
-        return (
+        # Construct MongoDB connection URI
+        mongo_uri = f"mongodb://{host}:{port}/{database}"
+        if username and password:
+            mongo_uri = f"mongodb://{username}:{password}@{host}:{port}/{database}"
+
+
+        # Writing using foreachBatch for more control and compatibility
+        def write_batch_to_mongo(batch_df, batch_id):
+            logger.debug(f"Writing batch {batch_id} to MongoDB {database}.{collection}")
+            (
+                batch_df.write
+                .format("mongodb")
+                .option("connection.uri", mongo_uri)
+                .option("database", database)
+                .option("collection", collection)
+                .mode(output_mode)  # Use the specified output mode
+                .save()
+            )
+
+        # Start the streaming query
+        query = (
             df.writeStream
-            .foreachBatch(lambda batch_df, batch_id:
-                          batch_df.write
-                          .format("org.apache.spark.sql.cassandra")
-                          .options(**cassandra_options)
-                          .mode("append")
-                          .save()
-                          )
+            .foreachBatch(write_batch_to_mongo)
             .option("checkpointLocation", checkpoint_location)
+            .outputMode(output_mode) # Ensure output mode is set for the stream
             .start()
         )
+        
+        # Returning the query object allows the caller to manage its lifecycle (e.g., awaitTermination)
+        # If you prefer the original fire-and-forget style, remove the return statement.
+        return query
 
     def run(self) -> None:
         """Template method to be implemented by subclasses."""

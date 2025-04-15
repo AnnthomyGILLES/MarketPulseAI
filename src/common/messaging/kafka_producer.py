@@ -218,7 +218,7 @@ if __name__ == "__main__":
     logger.remove()  # Remove default handler
     logger.add(sys.stderr, level="DEBUG")
 
-    KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "localhost:9093")
+    KAFKA_BROKERS = os.getenv("KAFKA_BROKERS")
     TEST_TOPIC = "my-test-topic"
 
     logger.info(f"Attempting to connect to Kafka brokers at {KAFKA_BROKERS}")
