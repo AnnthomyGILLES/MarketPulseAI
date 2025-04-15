@@ -1,6 +1,7 @@
 # Kafka Broker Configuration
-bootstrap_servers: ["localhost:9093"]
-bootstrap_servers_prod: ["kafka-1:9092", "kafka-2:9092", "kafka-3:9092"]
+bootstrap_servers: [ "localhost:9093" ]
+bootstrap_servers_container: [ "redpanda:29092" ]
+bootstrap_servers_prod: [ "kafka-1:9092", "kafka-2:9092", "kafka-3:9092" ]
 
 topics:
   # Reddit Collector Output Topics
