@@ -1,6 +1,4 @@
 # src/data_processing/reddit/sentiment_processor.py
-from datetime import datetime
-from pathlib import Path
 from typing import Dict, List, Optional
 
 from loguru import logger
@@ -245,59 +243,134 @@ class RedditSentimentProcessor(BaseStreamProcessor):
             F.lit(None).cast(MapType(StringType(), LongType())),
         )
 
-        # Sample permalinks
+        # Sample permalinks (take a few examples for reference)
         aggregated_df = aggregated_df.withColumn(
             "permalink_sample",
-            F.slice(F.col("all_permalinks"), 1, 5),
+            F.expr("slice(all_permalinks, 1, least(size(all_permalinks), 3))"),
         ).drop("all_permalinks")
 
-        # Add window details
-        aggregated_df = (
-            aggregated_df.withColumn("window_start", F.col("time_window.start"))
-            .withColumn("window_end", F.col("time_window.end"))
-            .withColumn("window_size", F.lit(window_duration))
-            .drop("time_window")
+        # Add a unique ID
+        aggregated_df = aggregated_df.withColumn(
+            "_id", 
+            F.concat(
+                F.col("symbol"),
+                F.lit("_"),
+                F.col("subreddit"),
+                F.lit("_"),
+                F.expr("cast(time_window.start as long)"),
+            )
         )
 
         logger.info("Sentiment aggregation completed")
         return aggregated_df
 
     def run(self) -> None:
-        """Run the Reddit sentiment analysis pipeline."""
+        """Run the Reddit sentiment processing pipeline."""
+        logger.info("Starting Reddit sentiment processing pipeline")
+
         try:
-            logger.info("Starting Reddit sentiment analysis pipeline")
+            # Set up Spark session with MongoDB connector
+            self.spark = self._create_spark_session()
+            
+            # Setup MongoDB packages and configuration
+            mongodb_config = self.config.get("mongodb", {})
+            
+            # Initialize streaming with Kafka source
+            kafka_stream = self._create_kafka_stream()
 
-            # Get configuration parameters
-            topics = (
-                f"{self.config['kafka']['topics']['social_media_reddit_validated']},"
-                f"{self.config['kafka']['topics']['social_media_reddit_comments_validated']}"
+            # Process streaming data
+            processed_stream = self.process_reddit_data(kafka_stream)
+            aggregated_stream = self.aggregate_sentiment(processed_stream)
+
+            # Write to MongoDB
+            mongodb_uri = f"mongodb://{mongodb_config.get('connection_host')}:{mongodb_config.get('connection_port')}"
+            database = mongodb_config.get("database", "social_media")
+            collection = mongodb_config.get("collection", "reddit_sentiment")
+            
+            # Define MongoDB output options
+            output_options = {
+                "uri": mongodb_uri,
+                "database": database,
+                "collection": collection,
+                "replaceDocument": "false",
+                "forceInsert": "true"
+            }
+            
+            # Add authentication if provided
+            if mongodb_config.get("auth_username") and mongodb_config.get("auth_password"):
+                output_options["credentials"] = {
+                    "user": mongodb_config.get("auth_username"),
+                    "password": mongodb_config.get("auth_password")
+                }
+            
+            # Configure MongoDB output stream
+            stream_query = (
+                aggregated_stream.writeStream
+                .outputMode("append")
+                .format("mongodb")
+                .option("checkpointLocation", f"{self.config['spark_settings']['checkpoint_location_base_path']}/mongodb")
+                .options(**output_options)
+                .trigger(processingTime=self.config["spark_settings"]["processing_window_duration"])
+                .start()
             )
-            cassandra_keyspace = self.config["cassandra"]["keyspace"]
-            cassandra_table = self.config["cassandra"]["table"]
 
-            # Generate a unique checkpoint location
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            checkpoint_dir = Path(self.config["spark_settings"]["checkpoint_location_base_path"])
-            checkpoint_location = str(checkpoint_dir / f"reddit_sentiment_{timestamp}")
-
-            # Read from Kafka
-            kafka_stream = self.read_from_kafka(topics)
-
-            # Process the data
-            processed_df = self.process_reddit_data(kafka_stream)
-            aggregated_df = self.aggregate_sentiment(processed_df)
-
-            # Write to Cassandra
-            query = self.write_to_cassandra(
-                aggregated_df,
-                cassandra_keyspace,
-                cassandra_table,
-                checkpoint_location
-            )
-
-            logger.info("Reddit sentiment analysis pipeline started, waiting for termination")
-            query.awaitTermination()
+            # Wait for termination
+            stream_query.awaitTermination()
 
         except Exception as e:
-            logger.exception(f"Error in Reddit sentiment analysis pipeline: {e}")
+            logger.error(f"Error in Reddit sentiment processing pipeline: {str(e)}")
             raise
+        finally:
+            if hasattr(self, "spark"):
+                self.spark.stop()
+
+    def _create_spark_session(self):
+        """Create a Spark session with the required dependencies.
+        
+        Returns:
+            Configured SparkSession
+        """
+        from pyspark.sql import SparkSession
+
+        # Get package dependencies from config
+        mongodb_package = self.config.get("mongodb", {}).get(
+            "spark_mongodb_package", "org.mongodb.spark:mongo-spark-connector_2.12:10.1.1"
+        )
+        
+        kafka_package = self.config.get("mongodb", {}).get(
+            "spark_kafka_package", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1"
+        )
+
+        # Build the Spark session with MongoDB connector
+        builder = (
+            SparkSession.builder.appName(self.config.get("app_name", "RedditSentimentAnalysis"))
+            .config("spark.jars.packages", f"{kafka_package},{mongodb_package}")
+            .config("spark.mongodb.output.uri", f"mongodb://{self.config['mongodb']['connection_host']}:{self.config['mongodb']['connection_port']}")
+        )
+
+        # Set write concern if specified
+        if "write_concern" in self.config.get("mongodb", {}):
+            builder = builder.config("spark.mongodb.output.writeConcern", self.config["mongodb"]["write_concern"])
+
+        # Apply any additional MongoDB configurations
+        for key, value in self.config.get("spark_settings", {}).items():
+            if key.startswith("spark."):
+                builder = builder.config(key, value)
+
+        # Return the configured Spark session
+        return builder.getOrCreate()
+
+    def _create_kafka_stream(self) -> DataFrame:
+        """Create a Kafka stream from configured topics.
+        
+        Returns:
+            DataFrame with raw Kafka data
+        """
+        kafka_config = self.config.get("kafka", {})
+        topics = kafka_config.get("topics", "")
+        
+        if isinstance(topics, list):
+            topics = ",".join(topics)
+        
+        logger.info(f"Creating Kafka stream for topics: {topics}")
+        return self.read_from_kafka(topics)
