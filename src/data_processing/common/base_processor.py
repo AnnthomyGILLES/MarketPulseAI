@@ -90,7 +90,7 @@ class BaseStreamProcessor:
         # Add required packages
         packages = [
             "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1",
-            "org.mongodb.spark:mongo-spark-connector_2.12:10.1.1"
+            "org.mongodb.spark:mongo-spark-connector_2.12:10.4.1"
         ]
         spark_builder = spark_builder.config("spark.jars.packages", ",".join(packages))
 

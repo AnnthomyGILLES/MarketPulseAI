@@ -31,5 +31,5 @@ mongodb:
     socketTimeoutMS: 10000
 
 # Spark Package Versions
-spark_mongodb_package: "org.mongodb.spark:mongo-spark-connector_2.12:10.1.1"
+spark_mongodb_package: "org.mongodb.spark:mongo-spark-connector_2.12:10.4.1"
 spark_kafka_package: "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1"
