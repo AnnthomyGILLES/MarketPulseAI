@@ -225,6 +225,11 @@ class RedditSentimentProcessor(BaseStreamProcessor):
     def _process_stream(self, kafka_df: DataFrame) -> DataFrame:
         """Parses Kafka messages, applies sentiment analysis, and prepares for sink."""
         logger.info("Processing Kafka stream data...")
+        
+        # Check if the input DataFrame is streaming
+        is_streaming = kafka_df.isStreaming
+        logger.info(f"Input Kafka DataFrame is streaming: {is_streaming}")
+        
         # Decode Kafka value from bytes to string, then parse JSON
         # Corrected Indentation applied here
         processed_df = (
@@ -300,25 +305,63 @@ class RedditSentimentProcessor(BaseStreamProcessor):
             # Drop intermediate columns if desired
             # .drop("sentiment_scores", "text_for_sentiment", "selftext")
         )
+
+        # Before returning the final DataFrame, verify it's still streaming
+        is_final_streaming = final_df.isStreaming
+        logger.info(f"Final processed DataFrame is streaming: {is_final_streaming}")
+        
         logger.info("Stream processing logic applied.")
         return final_df
 
     def _write_mongo_stream(self, df: DataFrame):
         """Writes the processed DataFrame stream to MongoDB."""
-        logger.info(
-            f"Setting up MongoDB write stream to db: {self.mongo_config['database']}, collection: {self.mongo_config['collection']}"
-        )
-
-        # Ensure checkpoint location exists or can be created by Spark
-        checkpoint_loc = self.processing_config["checkpoint_location"]
-        logger.info(f"Using checkpoint location: {checkpoint_loc}")
-        # Note: In some environments (like Databricks), DBFS paths are handled automatically.
-        # If running elsewhere, ensure the path is accessible and writable by the Spark driver/executors.
-        # e.g., use 'file:///path/to/checkpoint' for local filesystem or 'hdfs://...' for HDFS.
-
+        logger.info(f"Setting up MongoDB write stream to db: {self.mongo_config['database']}, collection: {self.mongo_config['collection']}")
+        
+        # Log Spark and MongoDB connector version information
         try:
+            # Check if the DataFrame is streaming
+            is_streaming = df.isStreaming
+            logger.info(f"Input DataFrame is streaming: {is_streaming}")
+            if not is_streaming:
+                logger.error("Error: Expected a streaming DataFrame but received a static DataFrame")
+                raise ValueError("Cannot use writeStream with a non-streaming DataFrame")
+            
+            spark_version = self.spark.version
+            logger.info(f"Using Spark version: {spark_version}")
+            
+            try:
+                mongo_version = self.spark._jvm.com.mongodb.spark.sql.connector.version.MongoSparkConnectorVersion.VERSION
+                logger.info(f"Using MongoDB Spark connector version: {mongo_version}")
+            except:
+                logger.warning("Unable to determine MongoDB connector version")
+            
+            logger.info(f"DataFrame schema: {df.schema}")
+            
+            # Log MongoDB connection details (redacting sensitive info)
+            mongo_uri = self.mongo_config["uri"]
+            safe_uri = mongo_uri.split('@')[-1].split('/')[0] if '@' in mongo_uri else "redacted"
+            logger.info(f"MongoDB connection host: {safe_uri}")
+            
+            checkpoint_loc = self.processing_config["checkpoint_location"]
+            logger.info(f"Using checkpoint location: {checkpoint_loc}")
+            
+            # Ensure the checkpoint location exists
+            try:
+                import os
+                from pathlib import Path
+                if checkpoint_loc.startswith("file:"):
+                    local_path = checkpoint_loc[5:]
+                    Path(local_path).mkdir(parents=True, exist_ok=True)
+                    logger.info(f"Created local checkpoint directory: {local_path}")
+            except Exception as e:
+                logger.warning(f"Could not create checkpoint directory: {e}")
+            
+            logger.info("Setting up streaming write to MongoDB...")
+            
+            # Make sure we're explicitly setting the format to the full class name
             query = (
-                df.writeStream.format("mongodb")
+                df.writeStream
+                .format("com.mongodb.spark.sql.connector.MongoTableProvider")
                 .option("spark.mongodb.connection.uri", self.mongo_config["uri"])
                 .option("spark.mongodb.database", self.mongo_config["database"])
                 .option("spark.mongodb.collection", self.mongo_config["collection"])
@@ -332,20 +375,44 @@ class RedditSentimentProcessor(BaseStreamProcessor):
                 .start()
             )
 
-            logger.info(
-                f"MongoDB write stream started. Checkpoint location: {checkpoint_loc}"
-            )
+            logger.info(f"MongoDB write stream started. Checkpoint location: {checkpoint_loc}")
             return query
         except Exception as e:
-            logger.error(
-                f"Failed to configure or start MongoDB write stream: {e}", exc_info=True
-            )
+            logger.error(f"Failed to configure or start MongoDB write stream: {e}", exc_info=True)
+            
+            # If the exception message contains 'Kafka', log Kafka configuration details
+            if 'kafka' in str(e).lower():
+                logger.error("Kafka-related error detected. Checking Kafka configuration...")
+                try:
+                    logger.info(f"Kafka brokers: {self.kafka_config.get('brokers', 'Not configured')}")
+                    logger.info(f"Kafka topic: {self.kafka_config.get('topic', 'Not configured')}")
+                except:
+                    logger.warning("Unable to retrieve Kafka configuration details")
+            
+            # Log available connector formats
+            try:
+                logger.info("Checking available formats in Spark session:")
+                available_formats = self.spark.sparkContext._jvm.org.apache.spark.sql.execution.datasources.DataSource.lookupDataSource("mongodb")
+                logger.info(f"MongoDB format lookup result: {available_formats}")
+            except:
+                logger.warning("Unable to check available formats")
+            
             raise
 
     def run(self):
         """Main method to execute the streaming job."""
         logger.info(f"Starting {self.app_name} job...")
+        mongo_write_query = None
+        
         try:
+            # Log system and JVM information
+            logger.info(f"Running on Python version: {sys.version}")
+            try:
+                java_version = self.spark.sparkContext._jvm.System.getProperty("java.version")
+                logger.info(f"Java version: {java_version}")
+            except:
+                logger.warning("Unable to determine Java version")
+            
             kafka_stream_df = self._read_kafka_stream()
             processed_df = self._process_stream(kafka_stream_df)
             mongo_write_query = self._write_mongo_stream(processed_df)
@@ -363,6 +430,20 @@ class RedditSentimentProcessor(BaseStreamProcessor):
                 f"An error occurred during the streaming job execution: {e}",
                 exc_info=True,
             )
+            
+            # Try to extract more details about the error
+            if hasattr(e, "__cause__") and e.__cause__:
+                logger.error(f"Caused by: {e.__cause__}", exc_info=True)
+            
+            # If it's a Py4JJavaError, try to extract more details from the Java side
+            if "Py4JJavaError" in str(type(e)):
+                logger.error("Java-side exception detected. Trying to extract more details.")
+                try:
+                    java_exception = str(e)
+                    logger.error(f"Java exception details: {java_exception}")
+                except:
+                    logger.error("Failed to extract Java exception details")
+            
             # Consider adding cleanup logic here if needed
             if (
                 "mongo_write_query" in locals()
