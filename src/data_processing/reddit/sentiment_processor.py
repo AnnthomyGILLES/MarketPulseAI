@@ -1,5 +1,5 @@
 # src/data_processing/reddit/sentiment_processor.py
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 
 from loguru import logger
 from pyspark.sql import DataFrame, SparkSession
@@ -123,28 +123,51 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         """
         logger.info("Processing Reddit data")
 
-        # Register UDFs using the instance methods
-        clean_text_udf = F.udf(self._clean_text, StringType())
-        extract_symbols_udf = F.udf(self._extract_symbols, ArrayType(StringType()))
+        # Define UDFs without any reference to self or instance variables
+        def clean_text_local(text: str) -> Optional[str]:
+            """Clean text for sentiment analysis."""
+            if text is None:
+                return None
 
-        sentiment_schema = StructType([
-            StructField("score", FloatType(), True),
-            StructField("magnitude", FloatType(), True),
-        ])
-        
-        # Define local function to avoid capturing self in UDF
+            import re
+            text = text.lower()
+            text = re.sub(r"http\S+|www\S+|https\S+", "", text, flags=re.MULTILINE)
+            text = re.sub(r"\$[a-zA-Z0-9_]+", "", text)
+            text = re.sub(r"@[a-zA-Z0-9_]+", "", text)
+            text = re.sub(r"[^a-zA-Z\s]", "", text)
+            text = re.sub(r"\s+", " ", text).strip()
+            return text if text else None
+
+        def extract_symbols_local(text: str) -> Optional[List[str]]:
+            if text is None:
+                return None
+            import re
+            potential_symbols = re.findall(r"\b([A-Z]{1,5})\b|\$([A-Z]{1,5})\b", text)
+            symbols = list(set(s for tup in potential_symbols for s in tup if s))
+            symbols = [s for s in symbols if len(s) > 0 and s.isupper()]
+            return symbols if symbols else None
+
         def get_sentiment_local(text):
             if text is None:
                 return None
             try:
+                # Create a fresh analyzer in each worker
                 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
                 analyzer = SentimentIntensityAnalyzer()
                 vs = analyzer.polarity_scores(text)
                 return {"score": vs["compound"], "magnitude": abs(vs["compound"])}
-            except Exception as e:
-                logger.warning(f"Sentiment analysis failed for text: {text[:50]}... Error: {e}")
+            except Exception:
+                # Don't use logger here as it might capture SparkContext
                 return None
-                
+
+        # Register UDFs using the fully local functions
+        clean_text_udf = F.udf(clean_text_local, StringType())
+        extract_symbols_udf = F.udf(extract_symbols_local, ArrayType(StringType()))
+        
+        sentiment_schema = StructType([
+            StructField("score", FloatType(), True),
+            StructField("magnitude", FloatType(), True),
+        ])
         get_sentiment_udf = F.udf(get_sentiment_local, sentiment_schema)
 
         # Parse JSON value from Kafka
@@ -199,7 +222,26 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         Returns:
             DataFrame with preprocessed text
         """
-        clean_text_udf = F.udf(self._clean_text, StringType())
+        logger.info("Entering _preprocess_text method")
+        
+        # Define a local function for UDF to avoid serializing the entire instance
+        def clean_text_local(text: str) -> Optional[str]:
+            """Clean text for sentiment analysis."""
+            if text is None:
+                return None
+
+            import re
+            text = text.lower()
+            text = re.sub(r"http\S+|www\S+|https\S+", "", text, flags=re.MULTILINE)
+            text = re.sub(r"\$[a-zA-Z0-9_]+", "", text)
+            text = re.sub(r"@[a-zA-Z0-9_]+", "", text)
+            text = re.sub(r"[^a-zA-Z\s]", "", text)
+            text = re.sub(r"\s+", " ", text).strip()
+            return text if text else None
+        
+        # Create UDF with local function
+        logger.info("Creating UDF with local function clean_text_local")
+        clean_text_udf = F.udf(clean_text_local, StringType())
         
         # Combine title and selftext
         df = df.withColumn(
@@ -207,6 +249,7 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         )
         
         # Clean text
+        logger.info("About to apply clean_text_udf to full_text")
         df = df.withColumn(
             "cleaned_text", clean_text_udf(F.col("full_text"))
         )
@@ -230,19 +273,20 @@ class RedditSentimentProcessor(BaseStreamProcessor):
             StructField("magnitude", FloatType(), True),
         ])
         
-        # Define local function to avoid capturing self in UDF
+        # Define local sentiment analysis function
         def get_sentiment_local(text):
             if text is None:
                 return None
             try:
+                # Create a fresh analyzer in each worker
                 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
                 analyzer = SentimentIntensityAnalyzer()
                 vs = analyzer.polarity_scores(text)
                 return {"score": vs["compound"], "magnitude": abs(vs["compound"])}
-            except Exception as e:
-                logger.warning(f"Sentiment analysis failed for text: {text[:50]}... Error: {e}")
+            except Exception:
+                # Don't use logger here as it might capture SparkContext
                 return None
-                
+            
         get_sentiment_udf = F.udf(get_sentiment_local, sentiment_schema)
         
         # Apply sentiment analysis
@@ -269,7 +313,21 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         Returns:
             DataFrame with exploded symbols
         """
-        extract_symbols_udf = F.udf(self._extract_symbols, ArrayType(StringType()))
+        # Define a local function for UDF to avoid serializing the entire instance
+        def extract_symbols_local(text: str) -> Optional[List[str]]:
+            """Extract stock symbols from text."""
+            if text is None:
+                return None
+
+            import re
+            potential_symbols = re.findall(r"\b([A-Z]{1,5})\b|\$([A-Z]{1,5})\b", text)
+            symbols = list(set(s for tup in potential_symbols for s in tup if s))
+            symbols = [s for s in symbols if len(s) > 0 and s.isupper()]
+            return symbols if symbols else None
+        
+        # Create UDF with local function
+        logger.info("Creating UDF with local function extract_symbols_local")
+        extract_symbols_udf = F.udf(extract_symbols_local, ArrayType(StringType()))
         
         # Extract symbols
         df = df.withColumn(
@@ -443,7 +501,6 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         Returns:
             Configured SparkSession
         """
-        from pyspark.sql import SparkSession
 
         # Get package dependencies from config
         mongodb_package = self.config.get(
