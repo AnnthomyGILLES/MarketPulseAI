@@ -208,7 +208,7 @@ class RedditSentimentProcessor(BaseStreamProcessor):
                 .option("subscribe", self.kafka_config["topic"])
                 .option(
                     "startingOffsets",
-                    self.kafka_config.get("starting_offsets", "latest"),
+                    "earliest"  # Changed from 'latest' to read all existing data
                 )
                 .option(
                     "failOnDataLoss",
@@ -216,7 +216,7 @@ class RedditSentimentProcessor(BaseStreamProcessor):
                 )
                 .load()
             )
-            logger.info("Kafka stream reader configured.")
+            logger.info("Kafka stream reader configured with startingOffsets=earliest to process existing data")
             return kafka_df
         except Exception as e:
             logger.error(f"Failed to configure Kafka read stream: {e}", exc_info=True)
@@ -317,6 +317,17 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         """Writes the processed DataFrame stream to MongoDB."""
         logger.info(f"Setting up MongoDB write stream to db: {self.mongo_config['database']}, collection: {self.mongo_config['collection']}")
         
+        # Test MongoDB connection before attempting streaming write
+        try:
+            from pymongo import MongoClient
+            client = MongoClient(self.mongo_config["uri"], serverSelectionTimeoutMS=5000)
+            client.admin.command('ping')
+            logger.info("MongoDB connection test successful")
+            db_names = client.list_database_names()
+            logger.info(f"Available MongoDB databases: {db_names}")
+        except Exception as e:
+            logger.error(f"MongoDB connection test failed: {e}")
+        
         # Log Spark and MongoDB connector version information
         try:
             # Check if the DataFrame is streaming
@@ -414,7 +425,19 @@ class RedditSentimentProcessor(BaseStreamProcessor):
                 logger.warning("Unable to determine Java version")
             
             kafka_stream_df = self._read_kafka_stream()
+            
+            # Add debug foreachBatch to count records after initial read
+            kafka_stream_df.writeStream.foreachBatch(
+                lambda df, _: logger.info(f"After Kafka read: {df.count()} records")
+            ).start()
+            
             processed_df = self._process_stream(kafka_stream_df)
+            
+            # Add debug foreachBatch to count records after processing
+            processed_df.writeStream.foreachBatch(
+                lambda df, _: logger.info(f"After processing: {df.count()} records")
+            ).start()
+            
             mongo_write_query = self._write_mongo_stream(processed_df)
 
             logger.info("Streaming job pipeline configured. Awaiting termination...")
