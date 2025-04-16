@@ -1,8 +1,8 @@
 # src/data_processing/reddit/sentiment_processor.py
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from loguru import logger
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
     StructType, StructField, StringType, TimestampType,
@@ -26,6 +26,7 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         super().__init__(config_path)
         self.reddit_schema = self._define_schema()
         self.sentiment_analyzer = SentimentIntensityAnalyzer()
+        self.spark = None
 
     def _define_schema(self) -> StructType:
         """Define the schema for Reddit data.
@@ -92,6 +93,25 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         symbols = [s for s in symbols if len(s) > 0 and s.isupper()]
         return symbols if symbols else None
 
+    def _get_sentiment(self, text: str) -> Optional[Dict[str, float]]:
+        """Calculate sentiment scores for text.
+        
+        Args:
+            text: Text to analyze
+            
+        Returns:
+            Dictionary with sentiment scores or None if analysis fails
+        """
+        if text is None:
+            return None
+            
+        try:
+            vs = self.sentiment_analyzer.polarity_scores(text)
+            return {"score": vs["compound"], "magnitude": abs(vs["compound"])}
+        except Exception as e:
+            logger.warning(f"Sentiment analysis failed for text: {text[:50]}... Error: {e}")
+            return None
+
     def process_reddit_data(self, df: DataFrame) -> DataFrame:
         """Process Reddit data for sentiment analysis.
 
@@ -103,34 +123,20 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         """
         logger.info("Processing Reddit data")
 
-        # Define UDF logic locally to avoid capturing 'self'
-        def clean_text_local(text: str) -> Optional[str]:
-            if text is None:
-                return None
-            import re
-            text = text.lower()
-            text = re.sub(r"http\S+|www\S+|https\S+", "", text, flags=re.MULTILINE)
-            text = re.sub(r"\$[a-zA-Z0-9_]+", "", text)
-            text = re.sub(r"@[a-zA-Z0-9_]+", "", text)
-            text = re.sub(r"[^a-zA-Z\s]", "", text)
-            text = re.sub(r"\s+", " ", text).strip()
-            return text if text else None
+        # Register UDFs using the instance methods
+        clean_text_udf = F.udf(self._clean_text, StringType())
+        extract_symbols_udf = F.udf(self._extract_symbols, ArrayType(StringType()))
 
-        def extract_symbols_local(text: str) -> Optional[List[str]]:
-            if text is None:
-                return None
-            import re
-            potential_symbols = re.findall(r"\b([A-Z]{1,5})\b|\$([A-Z]{1,5})\b", text)
-            symbols = list(set(s for tup in potential_symbols for s in tup if s))
-            symbols = [s for s in symbols if len(s) > 0 and s.isupper()]
-            return symbols if symbols else None
-
-        # Create a fresh analyzer object in each worker for sentiment
+        sentiment_schema = StructType([
+            StructField("score", FloatType(), True),
+            StructField("magnitude", FloatType(), True),
+        ])
+        
+        # Define local function to avoid capturing self in UDF
         def get_sentiment_local(text):
             if text is None:
                 return None
             try:
-                # Ensure vaderSentiment is imported on the worker
                 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
                 analyzer = SentimentIntensityAnalyzer()
                 vs = analyzer.polarity_scores(text)
@@ -138,15 +144,7 @@ class RedditSentimentProcessor(BaseStreamProcessor):
             except Exception as e:
                 logger.warning(f"Sentiment analysis failed for text: {text[:50]}... Error: {e}")
                 return None
-
-        # Register UDFs using the local functions
-        clean_text_udf = F.udf(clean_text_local, StringType())
-        extract_symbols_udf = F.udf(extract_symbols_local, ArrayType(StringType()))
-
-        sentiment_schema = StructType([
-            StructField("score", FloatType(), True),
-            StructField("magnitude", FloatType(), True),
-        ])
+                
         get_sentiment_udf = F.udf(get_sentiment_local, sentiment_schema)
 
         # Parse JSON value from Kafka
@@ -159,62 +157,154 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         parsed_df = parsed_df.withColumn("processing_timestamp", F.current_timestamp())
 
         # Basic filtering
-        filtered_df = parsed_df.filter(
+        filtered_df = self._filter_valid_posts(parsed_df)
+
+        # Text preprocessing
+        processed_df = self._preprocess_text(filtered_df)
+
+        # Sentiment analysis
+        sentiment_df = self._apply_sentiment_analysis(processed_df)
+
+        # Extract and explode symbols
+        exploded_df = self._extract_and_explode_symbols(sentiment_df)
+
+        # Add watermark and prepare for aggregation
+        final_df = self._prepare_for_aggregation(exploded_df)
+
+        logger.info("Reddit data processing completed")
+        return final_df
+
+    def _filter_valid_posts(self, df: DataFrame) -> DataFrame:
+        """Filter for valid Reddit posts.
+        
+        Args:
+            df: Input DataFrame
+            
+        Returns:
+            Filtered DataFrame
+        """
+        return df.filter(
             F.col("id").isNotNull()
             & F.col("created_utc").isNotNull()
             & (F.col("title").isNotNull() | F.col("selftext").isNotNull())
             & F.col("subreddit").isNotNull()
         )
 
-        # Text preprocessing
-        filtered_df = filtered_df.withColumn(
+    def _preprocess_text(self, df: DataFrame) -> DataFrame:
+        """Preprocess text for sentiment analysis.
+        
+        Args:
+            df: Input DataFrame
+            
+        Returns:
+            DataFrame with preprocessed text
+        """
+        clean_text_udf = F.udf(self._clean_text, StringType())
+        
+        # Combine title and selftext
+        df = df.withColumn(
             "full_text", F.concat_ws(" ", F.col("title"), F.col("selftext"))
         )
-        filtered_df = filtered_df.withColumn(
+        
+        # Clean text
+        df = df.withColumn(
             "cleaned_text", clean_text_udf(F.col("full_text"))
         )
-
+        
         # Filter out rows with empty text
-        filtered_df = filtered_df.filter(
+        return df.filter(
             F.col("cleaned_text").isNotNull() & (F.length(F.col("cleaned_text")) > 0)
         )
 
-        # Sentiment analysis
-        sentiment_df = filtered_df.withColumn(
+    def _apply_sentiment_analysis(self, df: DataFrame) -> DataFrame:
+        """Apply sentiment analysis to text.
+        
+        Args:
+            df: Input DataFrame
+            
+        Returns:
+            DataFrame with sentiment scores
+        """
+        sentiment_schema = StructType([
+            StructField("score", FloatType(), True),
+            StructField("magnitude", FloatType(), True),
+        ])
+        
+        # Define local function to avoid capturing self in UDF
+        def get_sentiment_local(text):
+            if text is None:
+                return None
+            try:
+                from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+                analyzer = SentimentIntensityAnalyzer()
+                vs = analyzer.polarity_scores(text)
+                return {"score": vs["compound"], "magnitude": abs(vs["compound"])}
+            except Exception as e:
+                logger.warning(f"Sentiment analysis failed for text: {text[:50]}... Error: {e}")
+                return None
+                
+        get_sentiment_udf = F.udf(get_sentiment_local, sentiment_schema)
+        
+        # Apply sentiment analysis
+        df = df.withColumn(
             "sentiment", get_sentiment_udf(F.col("cleaned_text"))
         )
-        sentiment_df = (
-            sentiment_df.withColumn("sentiment_score", F.col("sentiment.score"))
+        
+        # Extract sentiment components
+        df = (
+            df.withColumn("sentiment_score", F.col("sentiment.score"))
             .withColumn("sentiment_magnitude", F.col("sentiment.magnitude"))
             .drop("sentiment", "cleaned_text", "full_text")
         )
-
+        
         # Filter out rows where sentiment analysis failed
-        sentiment_df = sentiment_df.filter(F.col("sentiment_score").isNotNull())
+        return df.filter(F.col("sentiment_score").isNotNull())
 
-        # Entity recognition (stock symbols)
-        symbol_df = sentiment_df.withColumn(
+    def _extract_and_explode_symbols(self, df: DataFrame) -> DataFrame:
+        """Extract and explode symbols from text.
+        
+        Args:
+            df: Input DataFrame
+            
+        Returns:
+            DataFrame with exploded symbols
+        """
+        extract_symbols_udf = F.udf(self._extract_symbols, ArrayType(StringType()))
+        
+        # Extract symbols
+        df = df.withColumn(
             "symbols",
             extract_symbols_udf(F.concat_ws(" ", F.col("title"), F.col("selftext"))),
         )
-        symbol_df = symbol_df.filter(
+        
+        # Filter for posts with symbols
+        df = df.filter(
             F.col("symbols").isNotNull() & (F.size(F.col("symbols")) > 0)
         )
-        exploded_df = symbol_df.withColumn("symbol", F.explode(F.col("symbols"))).drop(
+        
+        # Explode symbols
+        return df.withColumn("symbol", F.explode(F.col("symbols"))).drop(
             "symbols"
         )
 
-        # Add watermark and prepare for aggregation
-        final_df = exploded_df.withColumn(
+    def _prepare_for_aggregation(self, df: DataFrame) -> DataFrame:
+        """Prepare DataFrame for aggregation by adding watermark.
+        
+        Args:
+            df: Input DataFrame
+            
+        Returns:
+            DataFrame ready for aggregation
+        """
+        # Add timestamp for windowing
+        df = df.withColumn(
             "event_timestamp", (F.col("created_utc")).cast(TimestampType())
         )
-
-        watermarked_df = final_df.withWatermark(
+        
+        # Add watermark
+        return df.withWatermark(
             "event_timestamp", self.config["spark_settings"]["watermark_delay_threshold"]
         )
-
-        logger.info("Reddit data processing completed")
-        return watermarked_df
 
     def aggregate_sentiment(self, df: DataFrame) -> DataFrame:
         """Aggregate sentiment data over time windows.
@@ -289,9 +379,6 @@ class RedditSentimentProcessor(BaseStreamProcessor):
             # Set up Spark session with MongoDB connector
             self.spark = self._create_spark_session()
             
-            # Setup MongoDB packages and configuration
-            mongodb_config = self.config.get("mongodb", {})
-            
             # Initialize streaming with Kafka source
             kafka_stream = self._create_kafka_stream()
 
@@ -300,48 +387,57 @@ class RedditSentimentProcessor(BaseStreamProcessor):
             aggregated_stream = self.aggregate_sentiment(processed_stream)
 
             # Write to MongoDB
-            mongodb_uri = f"mongodb://{mongodb_config.get('connection_host')}:{mongodb_config.get('connection_port')}"
-            database = mongodb_config.get("database", "social_media")
-            collection = mongodb_config.get("collection", "reddit_sentiment")
-            
-            # Define MongoDB output options
-            output_options = {
-                "uri": mongodb_uri,
-                "database": database,
-                "collection": collection,
-                "replaceDocument": "false",
-                "forceInsert": "true"
-            }
-            
-            # Add authentication if provided
-            if mongodb_config.get("auth_username") and mongodb_config.get("auth_password"):
-                output_options["credentials"] = {
-                    "user": mongodb_config.get("auth_username"),
-                    "password": mongodb_config.get("auth_password")
-                }
-            
-            # Configure MongoDB output stream
-            stream_query = (
-                aggregated_stream.writeStream
-                .outputMode("append")
-                .format("mongodb")
-                .option("checkpointLocation", f"{self.config['spark_settings']['checkpoint_location_base_path']}/mongodb")
-                .options(**output_options)
-                .trigger(processingTime=self.config["spark_settings"]["processing_window_duration"])
-                .start()
-            )
-
-            # Wait for termination
-            stream_query.awaitTermination()
+            self._write_to_mongodb(aggregated_stream)
 
         except Exception as e:
             logger.error(f"Error in Reddit sentiment processing pipeline: {str(e)}")
             raise
         finally:
-            if hasattr(self, "spark"):
+            if self.spark:
                 self.spark.stop()
 
-    def _create_spark_session(self):
+    def _write_to_mongodb(self, df: DataFrame) -> None:
+        """Write DataFrame to MongoDB.
+        
+        Args:
+            df: DataFrame to write
+        """
+        mongodb_config = self.config.get("mongodb", {})
+        mongodb_uri = f"mongodb://{mongodb_config.get('connection_host')}:{mongodb_config.get('connection_port')}"
+        database = mongodb_config.get("database", "social_media")
+        collection = mongodb_config.get("collection", "reddit_sentiment")
+        
+        # Define MongoDB output options
+        output_options = {
+            "uri": mongodb_uri,
+            "database": database,
+            "collection": collection,
+            "replaceDocument": "false",
+            "forceInsert": "true"
+        }
+        
+        # Add authentication if provided
+        if mongodb_config.get("auth_username") and mongodb_config.get("auth_password"):
+            output_options["credentials"] = {
+                "user": mongodb_config.get("auth_username"),
+                "password": mongodb_config.get("auth_password")
+            }
+        
+        # Configure MongoDB output stream
+        stream_query = (
+            df.writeStream
+            .outputMode("append")
+            .format("mongodb")
+            .option("checkpointLocation", f"{self.config['spark_settings']['checkpoint_location_base_path']}/mongodb")
+            .options(**output_options)
+            .trigger(processingTime=self.config["spark_settings"]["processing_window_duration"])
+            .start()
+        )
+
+        # Wait for termination
+        stream_query.awaitTermination()
+
+    def _create_spark_session(self) -> SparkSession:
         """Create a Spark session with the required dependencies.
         
         Returns:
@@ -359,44 +455,11 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         
         # Combine packages
         required_packages = f"{kafka_package},{mongodb_package}"
-        logger.info(f"Attempting to configure Spark session with packages: {required_packages}")
+        logger.info(f"Configuring Spark session with packages: {required_packages}")
 
         # Build the Spark session
-        builder = (
-            SparkSession.builder.appName(self.config.get("app_name", "RedditSentimentAnalysis"))
-            .config("spark.jars.packages", required_packages)
-            .config("spark.task.interruption.on.shutdown", "false")
-        )
+        builder = self._configure_spark_builder(required_packages)
         
-        # Configure MongoDB URI (handle authentication directly in URI if provided)
-        mongodb_config = self.config.get("mongodb", {})
-        mongo_host = mongodb_config.get('connection_host')
-        mongo_port = mongodb_config.get('connection_port')
-        
-        if mongodb_config.get("auth_username") and mongodb_config.get("auth_password"):
-            auth_user = mongodb_config['auth_username']
-            auth_pass = mongodb_config['auth_password']
-            # Construct URI with auth credentials
-            mongo_uri_base = f"mongodb://{auth_user}:{auth_pass}@{mongo_host}:{mongo_port}"
-            # Setting both input and output URIs is good practice
-            builder = builder.config("spark.mongodb.input.uri", mongo_uri_base) 
-            builder = builder.config("spark.mongodb.output.uri", mongo_uri_base)
-        else:
-            # Construct URI without auth
-            mongo_uri_base = f"mongodb://{mongo_host}:{mongo_port}"
-            builder = builder.config("spark.mongodb.input.uri", mongo_uri_base) 
-            builder = builder.config("spark.mongodb.output.uri", mongo_uri_base)
-
-        # Set write concern if specified
-        if "write_concern" in mongodb_config:
-            builder = builder.config("spark.mongodb.output.writeConcern", mongodb_config["write_concern"])
-
-        # Apply any additional Spark configurations from spark_settings
-        for key, value in self.config.get("spark_settings", {}).items():
-            # Avoid overriding packages or MongoDB URIs set above
-            if key.startswith("spark.") and key not in ["spark.jars.packages", "spark.mongodb.input.uri", "spark.mongodb.output.uri"]: 
-                builder = builder.config(key, value)
-
         # Get or create the session
         logger.info("Getting or creating Spark session...")
         spark = builder.getOrCreate()
@@ -411,8 +474,72 @@ class RedditSentimentProcessor(BaseStreamProcessor):
                             "This usually means the session was created *before* this processor started, without the necessary packages. "
                             "Ensure packages are configured during the initial SparkSession creation.")
 
-        # Return the configured Spark session
         return spark
+        
+    def _configure_spark_builder(self, required_packages: str) -> "SparkSession.Builder":
+        """Configure the Spark session builder.
+        
+        Args:
+            required_packages: Comma-separated list of packages
+            
+        Returns:
+            Configured SparkSession builder
+        """
+        from pyspark.sql import SparkSession
+        
+        # Build the Spark session
+        builder = (
+            SparkSession.builder.appName(self.config.get("app_name", "RedditSentimentAnalysis"))
+            .config("spark.jars.packages", required_packages)
+            .config("spark.task.interruption.on.shutdown", "false")
+        )
+        
+        # Configure MongoDB URI
+        self._configure_mongodb_connection(builder)
+
+        # Apply any additional Spark configurations from spark_settings
+        self._apply_additional_spark_configs(builder)
+        
+        return builder
+        
+    def _configure_mongodb_connection(self, builder: "SparkSession.Builder") -> None:
+        """Configure MongoDB connection for Spark.
+        
+        Args:
+            builder: SparkSession builder to configure
+        """
+        mongodb_config = self.config.get("mongodb", {})
+        mongo_host = mongodb_config.get('connection_host')
+        mongo_port = mongodb_config.get('connection_port')
+        
+        if mongodb_config.get("auth_username") and mongodb_config.get("auth_password"):
+            auth_user = mongodb_config['auth_username']
+            auth_pass = mongodb_config['auth_password']
+            # Construct URI with auth credentials
+            mongo_uri_base = f"mongodb://{auth_user}:{auth_pass}@{mongo_host}:{mongo_port}"
+        else:
+            # Construct URI without auth
+            mongo_uri_base = f"mongodb://{mongo_host}:{mongo_port}"
+            
+        # Setting both input and output URIs
+        builder.config("spark.mongodb.input.uri", mongo_uri_base)
+        builder.config("spark.mongodb.output.uri", mongo_uri_base)
+
+        # Set write concern if specified
+        if "write_concern" in mongodb_config:
+            builder.config("spark.mongodb.output.writeConcern", mongodb_config["write_concern"])
+            
+    def _apply_additional_spark_configs(self, builder: "SparkSession.Builder") -> None:
+        """Apply additional Spark configurations from config.
+        
+        Args:
+            builder: SparkSession builder to configure
+        """
+        # Apply any additional Spark configurations from spark_settings
+        for key, value in self.config.get("spark_settings", {}).items():
+            # Avoid overriding packages or MongoDB URIs set above
+            if key.startswith("spark.") and key not in ["spark.jars.packages", "spark.mongodb.input.uri", "spark.mongodb.output.uri"]: 
+                builder.config(key, value)
 
     def _create_kafka_stream(self) -> DataFrame:
         """Create a Kafka stream from configured topics.
