@@ -113,12 +113,61 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         logger.info(f"Loading configuration from: {config_path}")
         self.config = load_config(config_path)
         # Extract necessary configurations with defaults
-        self.app_name = self.config.get("spark", {}).get(
-            "app_name", "RedditSentimentProcessor"
-        )
-        self.kafka_config = self.config.get("kafka", {})
+        self.app_name = self.config.get("app_name", "RedditSentimentProcessor")
+        
+        # Check if we have a reference to external Kafka config
+        if "kafka_config_path" in self.config:
+            logger.info(f"Loading Kafka config from: {self.config['kafka_config_path']}")
+            kafka_external_config = load_config(self.config['kafka_config_path'])
+            
+            # Create Kafka config structure from external file
+            self.kafka_config = {
+                # Use container servers by default, can be changed to bootstrap_servers or bootstrap_servers_prod
+                "brokers": ",".join(kafka_external_config.get("bootstrap_servers_container", ["redpanda:29092"])),
+                # Use the reddit posts topic
+                "topic": kafka_external_config.get("topics", {}).get("social_media_reddit_posts", "social-media-reddit-posts")
+            }
+            logger.info(f"Using Kafka brokers: {self.kafka_config['brokers']}")
+            logger.info(f"Using Kafka topic: {self.kafka_config['topic']}")
+        else:
+            # Use direct Kafka config if specified
+            self.kafka_config = self.config.get("kafka", {})
+        
         self.mongo_config = self.config.get("mongodb", {})
-        self.processing_config = self.config.get("processing", {})
+        
+        # Build MongoDB URI from individual components if uri not directly specified
+        if "uri" not in self.mongo_config and "connection_host" in self.mongo_config:
+            host = self.mongo_config.get("connection_host")
+            port = self.mongo_config.get("connection_port", "27017")
+            user = self.mongo_config.get("auth_username")
+            password = self.mongo_config.get("auth_password")
+            
+            if user and password:
+                uri = f"mongodb://{user}:{password}@{host}:{port}"
+            else:
+                uri = f"mongodb://{host}:{port}"
+            
+            # Add additional connection options if available
+            if "connection_options" in self.mongo_config:
+                options = []
+                for key, value in self.mongo_config["connection_options"].items():
+                    options.append(f"{key}={value}")
+                
+                if options:
+                    uri = f"{uri}/?{'&'.join(options)}"
+                
+            self.mongo_config["uri"] = uri
+            logger.info(f"Built MongoDB URI from components: {uri.replace(password, '*****') if password else uri}")
+        
+        # Use spark_settings structure for processing config if available
+        if "spark_settings" in self.config:
+            self.processing_config = {
+                "checkpoint_location": self.config["spark_settings"].get("checkpoint_location_base_path", "/tmp/checkpoints/reddit"),
+                "output_mode": "append",
+                "trigger_interval": self.config["spark_settings"].get("processing_window_duration", "1 minute")
+            }
+        else:
+            self.processing_config = self.config.get("processing", {})
 
         # Validate essential configurations
         if not all([self.kafka_config.get("brokers"), self.kafka_config.get("topic")]):
@@ -144,7 +193,7 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         logger.info(f"Initializing Spark session for app: {self.app_name}")
         # Pass relevant configs to the base class constructor if it expects them
         # Assuming BaseStreamProcessor sets up SparkSession based on app_name and potentially mongo_config
-        super().__init__(app_name=self.app_name, mongo_config=self.mongo_config)
+        super().__init__(config_path=config_path)
         logger.info("Spark session initialized successfully.")
 
     def _read_kafka_stream(self) -> DataFrame:
