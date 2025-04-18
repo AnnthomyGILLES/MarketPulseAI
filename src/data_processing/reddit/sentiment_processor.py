@@ -1,5 +1,7 @@
+import os
+import sys
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import from_json, col, lit, current_timestamp, when, to_json
+from pyspark.sql.functions import from_json, col, lit, current_timestamp, when
 from pyspark.sql.types import (
     StructType,
     StructField,
@@ -11,13 +13,15 @@ from pyspark.sql.types import (
 )
 from loguru import logger
 from pathlib import Path
-from typing import Any
 
 from src.data_processing.common.base_processor import BaseStreamProcessor
 
+os.environ["PYSPARK_PYTHON"] = sys.executable
+os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
+
 
 class RedditSentimentProcessor(BaseStreamProcessor):
-    """Processor for Reddit posts streamed from Kafka to CSV."""
+    """Processor for Reddit posts streamed from Kafka to MongoDB."""
 
     def __init__(self, config_path: str):
         """Initialize the Reddit post processor.
@@ -90,53 +94,28 @@ class RedditSentimentProcessor(BaseStreamProcessor):
 
         return processed_df
 
-    def write_to_csv(self, df: DataFrame, output_path: str, checkpoint_location: str) -> Any:
-        """Write streaming DataFrame to CSV files.
-
-        Args:
-            df: DataFrame to write
-            output_path: Base path for CSV output
-            checkpoint_location: Checkpoint directory path
-
-        Returns:
-            StreamingQuery object
-        """
-        logger.info(f"Writing data to CSV files at {output_path}")
-        
-        # Convert array column to string for CSV compatibility
-        csv_ready_df = df.withColumn("detected_symbols", to_json(col("detected_symbols")))
-        
-        # Start the streaming query
-        query = (
-            csv_ready_df.writeStream
-            .format("csv")
-            .option("path", output_path)
-            .option("checkpointLocation", checkpoint_location)
-            .option("header", "true")
-            .outputMode("append")
-            .start()
-        )
-        
-        return query
-
     def run(self) -> None:
-        """Main execution method to process Reddit posts from Kafka to CSV."""
+        """Main execution method to process Reddit posts from Kafka to MongoDB."""
         logger.info("Starting Reddit post processing pipeline")
 
         try:
             # Get configuration values
-            kafka_topics = "social-media-reddit-posts-validated" 
+            kafka_topics = "social-media-reddit-posts-validated"
+            kafka_topics = f"{self.config['kafka']['topics']['social_media_reddit_validated']}, {self.config['kafka']['topics']['social_media_reddit_comments_validated']}"
             checkpoint_location = self.config.get(
                 "checkpoint_location", "/tmp/reddit_checkpoint"
             )
-            
-            # Set CSV output path to a directory that's mounted to host
-            # Use /opt/bitnami/spark/src/output which maps to ./src/output on the host
-            output_path = "/opt/bitnami/spark/src/output/reddit_posts"
 
-            # Create directories if they don't exist
+            # Get MongoDB configuration
+            mongodb_database = self.config.get("mongodb", {}).get(
+                "database", "social_media"
+            )
+            mongodb_collection = self.config.get("mongodb", {}).get(
+                "collection", "reddit_posts"
+            )
+
+            # Create checkpoint directory if it doesn't exist
             Path(checkpoint_location).mkdir(parents=True, exist_ok=True)
-            Path(output_path).mkdir(parents=True, exist_ok=True)
 
             # Read from Kafka
             kafka_df = self.read_from_kafka(kafka_topics)
@@ -144,11 +123,19 @@ class RedditSentimentProcessor(BaseStreamProcessor):
             # Process data
             processed_df = self.process_reddit_posts(kafka_df)
 
-            # Write to CSV instead of MongoDB
-            query = self.write_to_csv(processed_df, output_path, checkpoint_location)
+            # Write to MongoDB instead of CSV
+            query = self.write_to_mongodb(
+                processed_df,
+                database=mongodb_database,
+                collection=mongodb_collection,
+                checkpoint_location=checkpoint_location,
+                output_mode="append",
+            )
 
             # Wait for termination
-            logger.info(f"Streaming query started, writing CSV to {output_path}")
+            logger.info(
+                f"Streaming query started, writing to MongoDB {mongodb_database}.{mongodb_collection}"
+            )
             query.awaitTermination()
 
         except Exception as e:
