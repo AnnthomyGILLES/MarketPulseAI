@@ -80,7 +80,7 @@ class BaseStreamProcessor:
 
             mongo_uri = f"mongodb://{host}:{port}/{database}"
             if username and password:
-                mongo_uri = f"mongodb://{username}:{password}@{host}:{port}/{database}"
+                mongo_uri = f"mongodb://{username}:{password}@{host}:{port}/{database}?authSource=admin"
             
             # Add MongoDB related Spark configurations if necessary
             spark_builder = spark_builder.config("spark.mongodb.output.uri", mongo_uri)
@@ -151,7 +151,7 @@ class BaseStreamProcessor:
         # Construct MongoDB connection URI
         mongo_uri = f"mongodb://{host}:{port}/{database}"
         if username and password:
-            mongo_uri = f"mongodb://{username}:{password}@{host}:{port}/{database}"
+            mongo_uri = f"mongodb://{username}:{password}@{host}:{port}/{database}?authSource=admin"
 
 
         # Writing using foreachBatch for more control and compatibility

@@ -81,7 +81,7 @@ class SparkPipelineConfig(BaseModel):
     spark_cassandra_package: str = (
         "com.datastax.spark:spark-cassandra-connector_2.12:3.4.1"
     )
-    spark_kafka_package: str = "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1"
+    spark_kafka_package: str = "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1"
     # cassandra_write_consistency: str = "LOCAL_QUORUM"
 
 
@@ -185,7 +185,7 @@ def load_config(
             ),
             spark_kafka_package=spark_settings.get(
                 "spark_kafka_package",
-                "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1",
+                "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1",
             ),
             # cassandra_write_consistency=spark_settings.get("cassandra_write_consistency", "LOCAL_QUORUM"),
         )
