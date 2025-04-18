@@ -72,11 +72,11 @@ class BaseStreamProcessor:
         # Add MongoDB configurations if present
         mongodb_config = self.config.get("mongodb", {})
         if mongodb_config:
-            host = mongodb_config.get("host")
-            port = mongodb_config.get("port")
+            host = mongodb_config.get("connection_host")
+            port = mongodb_config.get("connection_port")
             database = mongodb_config.get("database")
-            username = mongodb_config.get("username")
-            password = mongodb_config.get("password")
+            username = mongodb_config.get("auth_username")
+            password = mongodb_config.get("auth_password")
 
             mongo_uri = f"mongodb://{host}:{port}/{database}"
             if username and password:
@@ -89,7 +89,7 @@ class BaseStreamProcessor:
 
         # Add required packages
         packages = [
-            "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1",
+            "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1",
             "org.mongodb.spark:mongo-spark-connector_2.12:10.4.1"
         ]
         spark_builder = spark_builder.config("spark.jars.packages", ",".join(packages))
@@ -140,11 +140,14 @@ class BaseStreamProcessor:
         logger.info(f"Writing data to MongoDB {database}.{collection}")
 
         mongodb_config = self.config.get("mongodb", {})
-        host = mongodb_config.get("host")
-        port = mongodb_config.get("port")
-        username = mongodb_config.get("username")
-        password = mongodb_config.get("password")
+        logger.info(f"MongoDB config: {mongodb_config}")
+        host = mongodb_config.get("connection_host")
+        port = mongodb_config.get("connection_port")
+        username = mongodb_config.get("auth_username")
+        password = mongodb_config.get("auth_password")
 
+        logger.info(f"Using MongoDB host: {host}, port: {port}, database: {database}, collection: {collection}, username: {username}, password: {password}")
+                    
         # Construct MongoDB connection URI
         mongo_uri = f"mongodb://{host}:{port}/{database}"
         if username and password:
