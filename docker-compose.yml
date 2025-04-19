@@ -74,8 +74,6 @@ services:
     command: >
       bash -c "
         echo 'Setting up development environment...' &&
-        mkdir -p /.local/bin &&
-        export PATH=$PATH:/.local/bin &&
         pip install --no-cache-dir --upgrade pip &&
         pip install --no-cache-dir \"yfinance>=0.2.54,<1.0.0\" \"pydantic>=2.10.6,<3.0.0\" \"tweepy[async]>=4.15.0,<5.0.0\" \"kafka-python>=2.0.5,<3.0.0\" \"loguru>=0.7.3,<1.0.0\" \"pyspark>=3.5.5,<4.0.0\" \"ruff>=0.9.9,<1.0.0\" \"transformers>=4.50.0,<5.0.0\" \"nltk>=3.9.1,<4.0.0\" \"emoji>=2.14.1,<3.0.0\" \"cassandra-driver>=3.29.2,<4.0.0\" \"polygon-api-client>=1.14.4,<2.0.0\" \"praw>=7.8.1,<8.0.0\" \"python-dotenv>=1.1.0,<2.0.0\" \"vadersentiment>=3.3.2\" \"typer>=0.15.2\" \"pendulum>=3.0.0\" \"confluent-kafka>=2.9.0\" pymongo pandas matplotlib &&
         echo 'Spark development environment ready!' &&
@@ -132,6 +130,32 @@ services:
       interval: 30s
       timeout: 30s
       retries: 5
+
+  # Add this new service
+  streamlit:
+    image: python:3.9-slim
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+    environment:
+      - MONGODB_HOST=mongodb
+      - MONGODB_PORT=27017
+      - MONGODB_USERNAME=mongodb_user
+      - MONGODB_PASSWORD=mongodb_password
+    networks:
+      - kafka-network
+    depends_on:
+      - mongodb
+    command: >
+      bash -c "
+        apt-get update && apt-get install -y --no-install-recommends git &&
+        pip install --no-cache-dir --upgrade pip &&
+        pip install --no-cache-dir streamlit plotly pandas pymongo pyyaml loguru &&
+        cd /app &&
+        streamlit run src/visualization/streamlit_dashboard.py -- /app/config/spark/reddit_sentiment_config.yaml
+      "
 
 volumes:
   redpanda-data:
