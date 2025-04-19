@@ -23,6 +23,17 @@ services:
         reservations:
           memory: 3G
 
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:latest
+    ports:
+      - "8081:8080"
+    environment:
+      - KAFKA_BROKERS=redpanda:29092
+    depends_on:
+      - redpanda
+    networks:
+      - kafka-network
+
   mongodb:
     image: mongo:latest
     ports:
@@ -48,7 +59,6 @@ services:
         reservations:
           memory: 1G
 
-  # Single Spark dev container with all components
   spark:
     image: bitnami/spark:latest
     ports:
@@ -80,81 +90,6 @@ services:
         echo 'Run your Reddit Sentiment script manually with:' &&
         echo '/opt/bitnami/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.mongodb.spark:mongo-spark-connector_2.12:10.4.1 /opt/bitnami/spark/src/data_processing/main.py process-reddit' &&
         tail -f /dev/null
-      "
-
-
-  redpanda-console:
-    image: docker.redpanda.com/redpandadata/console:latest
-    ports:
-      - "8081:8080"
-    environment:
-      - KAFKA_BROKERS=redpanda:29092
-    depends_on:
-      - redpanda
-    networks:
-      - kafka-network
-
-  mongo-express:
-    image: mongo-express:latest
-    ports:
-      - "8082:8081"
-    environment:
-      - ME_CONFIG_MONGODB_SERVER=mongodb
-      - ME_CONFIG_MONGODB_PORT=27017
-      - ME_CONFIG_MONGODB_ADMINUSERNAME=mongodb_user
-      - ME_CONFIG_MONGODB_ADMINPASSWORD=mongodb_password
-      - ME_CONFIG_BASICAUTH_USERNAME=admin
-      - ME_CONFIG_BASICAUTH_PASSWORD=admin
-    networks:
-      - kafka-network
-    depends_on:
-      - mongodb
-
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_INSTALL_PLUGINS=grafana-mongodb-datasource
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./config/grafana/provisioning:/etc/grafana/provisioning
-    networks:
-      - kafka-network
-    depends_on:
-      - mongodb
-    healthcheck:
-      test: [ "CMD", "curl", "--fail", "http://localhost:3000/api/health" ]
-      interval: 30s
-      timeout: 30s
-      retries: 5
-
-  # Add this new service
-  streamlit:
-    image: python:3.9-slim
-    ports:
-      - "8501:8501"
-    volumes:
-      - ./src:/app/src
-      - ./config:/app/config
-    environment:
-      - MONGODB_HOST=mongodb
-      - MONGODB_PORT=27017
-      - MONGODB_USERNAME=mongodb_user
-      - MONGODB_PASSWORD=mongodb_password
-    networks:
-      - kafka-network
-    depends_on:
-      - mongodb
-    command: >
-      bash -c "
-        apt-get update && apt-get install -y --no-install-recommends git &&
-        pip install --no-cache-dir --upgrade pip &&
-        pip install --no-cache-dir streamlit plotly pandas pymongo pyyaml loguru &&
-        cd /app &&
-        streamlit run src/visualization/streamlit_dashboard.py -- /app/config/spark/reddit_sentiment_config.yaml
       "
 
 volumes:
