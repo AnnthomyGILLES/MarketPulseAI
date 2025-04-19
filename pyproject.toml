@@ -23,6 +23,9 @@ dependencies = [
     "pendulum>=3.0.0",
     "confluent-kafka>=2.9.0",
     "pymongo>=4.12.0",
+    "streamlit>=1.44.1",
+    "plotly>=6.0.1",
+    "pandas>=2.2.3",
 ]
 name = "marketpulseai"
 version = "0.1.0"
