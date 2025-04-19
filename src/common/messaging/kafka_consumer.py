@@ -1,19 +1,16 @@
 # src/common/messaging/kafka_consumer.py
 
 import json  # For handling deserialization errors
-import time  # Keep for potential error handling delays
 from typing import Dict, Any, List, Optional, Generator, Union, Tuple
 
 # Use kafka-python library
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError, NoBrokersAvailable, KafkaTimeoutError
+from loguru import logger
 
 # Assuming these utilities exist and work as expected
 from src.common.messaging.serializers import deserialize_message  #
-from src.utils.logging import get_logger  # Use the central logging utility
 
-# Get logger for this module
-logger = get_logger(__name__)
 
 
 class KafkaConsumerWrapper:
