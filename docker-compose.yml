@@ -92,6 +92,29 @@ services:
         tail -f /dev/null
       "
 
+  streamlit:
+    image: python:3.9-slim
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./logs/streamlit:/app/logs
+    environment:
+      - MONGODB_HOST=mongodb
+      - MONGODB_PORT=27017
+    networks:
+      - kafka-network
+    depends_on:
+      - mongodb
+    command: >
+      bash -c "
+        pip install --no-cache-dir --upgrade pip &&
+        pip install --no-cache-dir streamlit pandas plotly pymongo pyyaml loguru &&
+        cd /app &&
+        streamlit run src/visualization/streamlit_dashboard.py -- /app/config/spark/reddit_sentiment_config.yaml
+      "
+
 volumes:
   redpanda-data:
   spark-volume:
