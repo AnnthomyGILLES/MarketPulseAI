@@ -153,8 +153,8 @@ class MongoDashboard:
                 st.metric("Unique Subreddits", unique_subreddits)
 
         # Dashboard tabs
-        tab1, tab2, tab3, tab4 = st.tabs(
-            ["Subreddit Analysis", "Symbol Analysis", "Sentiment Trends", "Raw Data"]
+        tab1, tab2, tab3 = st.tabs(
+            ["Subreddit Analysis", "Symbol Analysis", "Sentiment Trends"]
         )
 
         with tab1:
@@ -320,32 +320,6 @@ class MongoDashboard:
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("Sentiment score data not available.")
-
-        with tab4:
-            st.subheader("Raw Data")
-
-            # Show sample of the data
-            cols_to_show = [
-                "author",
-                "subreddit",
-                "title",
-                "score",
-                "num_comments",
-                "created_datetime",
-                "detected_symbols",
-            ]
-            display_cols = [col for col in cols_to_show if col in df.columns]
-
-            st.dataframe(df[display_cols].head(100), use_container_width=True)
-
-            # Download option
-            csv = df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "Download Data as CSV",
-                data=csv,
-                file_name=f"{collection_name}_data.csv",
-                mime="text/csv",
-            )
 
         # Add auto-refresh functionality at the end
         if auto_refresh:
