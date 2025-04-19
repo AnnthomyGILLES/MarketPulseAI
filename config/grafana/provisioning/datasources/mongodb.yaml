@@ -1,0 +1,13 @@
+apiVersion: 1
+datasources:
+  - name: MongoDB
+    type: grafana-mongodb-datasource
+    access: proxy
+    url: mongodb:27017
+    database: social_media
+    isDefault: false
+    jsonData:
+      connection_options: "ssl=false&authSource=admin"
+    secureJsonData:
+      username: mongodb_user
+      password: mongodb_password
