@@ -10,8 +10,6 @@ from pyspark.sql.functions import (
     udf,
     expr,
     to_timestamp,
-    concat,
-    coalesce,
 )
 from pyspark.sql.types import (
     StructType,
@@ -140,22 +138,15 @@ class RedditSentimentProcessor(BaseStreamProcessor):
 
         return self.analyze_sentiment(combined_text)
 
-    def _create_sentiment_udf(self):
-        """Create a UDF for sentiment analysis that doesn't reference self."""
-        # Create a standalone analyzer instance for the UDF
-        analyzer = SentimentIntensityAnalyzer()
-
-        def analyze_text(text: str) -> float:
-            """Inner function for sentiment analysis."""
-            if not text or not isinstance(text, str) or text.strip() == "":
-                return 0.0
-            sentiment = analyzer.polarity_scores(text)
-            return sentiment["compound"]
-
-        return udf(analyze_text, FloatType())
-
     def process_reddit_posts(self, kafka_df: DataFrame) -> DataFrame:
-        """Process Reddit posts from Kafka."""
+        """Process Reddit posts from Kafka.
+
+        Args:
+            kafka_df: Raw DataFrame from Kafka
+
+        Returns:
+            Processed DataFrame ready for output
+        """
         logger.info("Processing Reddit posts")
 
         # Parse JSON from Kafka value field
@@ -165,32 +156,30 @@ class RedditSentimentProcessor(BaseStreamProcessor):
             .select("data.*")
         )
 
-        # Create sentiment analysis UDF
-        sentiment_udf = self._create_sentiment_udf()
-
-        # Combine title and selftext for sentiment analysis
-        processed_df = reddit_df.withColumn(
-            "processing_timestamp", 
-            current_timestamp()
-        ).withColumn(
-            "detected_symbols",
-            when(col("detected_symbols").isNull(), lit([])).otherwise(
-                col("detected_symbols")
+        # Register the UDF with the Spark session
+        sentiment_udf = udf(
+            lambda title, selftext: self.analyze_sentiment(
+                (title or "") + " " + (selftext or "")
             ),
-        ).withColumn(
-            "combined_text",
-            concat(
-                coalesce(col("title"), lit("")),
-                lit(" "),
-                coalesce(col("selftext"), lit(""))
+            FloatType(),
+        )
+        self.spark.udf.register("sentiment_analysis", sentiment_udf)
+
+        # Enrich data
+        processed_df = (
+            reddit_df.withColumn("processing_timestamp", current_timestamp())
+            .withColumn(
+                "detected_symbols",
+                when(col("detected_symbols").isNull(), lit([])).otherwise(
+                    col("detected_symbols")
+                ),
             )
-        ).withColumn(
-            "sentiment_score",
-            sentiment_udf(col("combined_text"))
-        ).withColumn(
-            "created_timestamp",
-            to_timestamp(col("created_datetime"), "yyyy-MM-dd HH:mm:ss")
-        ).drop("combined_text")  # Remove the temporary column
+            .withColumn("sentiment_score", expr("sentiment_analysis(title, selftext)"))
+            .withColumn(
+                "created_timestamp",
+                to_timestamp(col("created_datetime"), "yyyy-MM-dd HH:mm:ss"),
+            )
+        )
 
         return processed_df
 
