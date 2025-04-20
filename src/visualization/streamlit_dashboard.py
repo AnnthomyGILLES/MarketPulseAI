@@ -81,7 +81,7 @@ class MongoDashboard:
             min_value=5,
             max_value=300,
             value=60,
-            step=5
+            step=5,
         )
 
         auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=True)
