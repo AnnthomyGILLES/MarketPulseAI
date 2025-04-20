@@ -29,6 +29,7 @@ dependencies = [
     "fastapi>=0.115.12",
     "uvicorn>=0.34.2",
     "motor>=3.7.0",
+    "redis>=5.2.1",
 ]
 name = "marketpulseai"
 version = "0.1.0"
