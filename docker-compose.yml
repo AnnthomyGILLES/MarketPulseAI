@@ -160,7 +160,7 @@ services:
   redisinsight:
     image: redislabs/redisinsight:latest
     ports:
-      - "8082:8001"
+      - "5540:5540"
     networks:
       - kafka-network
     depends_on:
