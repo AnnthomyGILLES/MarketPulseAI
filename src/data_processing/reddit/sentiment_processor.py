@@ -7,11 +7,24 @@ from typing import Dict, List, Set, Tuple, Any, Optional, Union
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import (
-    from_json, col, lit, current_timestamp, when, udf, explode, abs as spark_abs
+    from_json,
+    col,
+    lit,
+    current_timestamp,
+    when,
+    udf,
+    explode,
+    abs as spark_abs,
 )
 from pyspark.sql.types import (
-    StructType, StructField, StringType, IntegerType, BooleanType, 
-    FloatType, ArrayType, MapType
+    StructType,
+    StructField,
+    StringType,
+    IntegerType,
+    BooleanType,
+    FloatType,
+    ArrayType,
+    MapType,
 )
 from loguru import logger
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
@@ -26,28 +39,30 @@ os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 
 class TextPreprocessor:
     """Handle text preprocessing for Reddit posts."""
-    
+
     def __init__(self, valid_tickers: Set[str], config: Dict[str, Any]):
         """Initialize the text preprocessor.
-        
+
         Args:
             valid_tickers: Set of valid stock ticker symbols
             config: Configuration dictionary for preprocessing
         """
         self.valid_tickers = valid_tickers
         self.preprocessing_config = config.get("preprocessing", {})
-        self.ticker_extraction_config = config.get("reddit", {}).get("ticker_extraction", {})
-        
+        self.ticker_extraction_config = config.get("reddit", {}).get(
+            "ticker_extraction", {}
+        )
+
     def create_preprocess_function(self):
         """Create a function to preprocess Reddit posts."""
-        
+
         def preprocess_reddit_post(
-            title: Optional[str], 
-            selftext: Optional[str], 
-            subreddit: Optional[str], 
-            score: Optional[int], 
-            upvote_ratio: Optional[float], 
-            num_comments: Optional[int]
+            title: Optional[str],
+            selftext: Optional[str],
+            subreddit: Optional[str],
+            score: Optional[int],
+            upvote_ratio: Optional[float],
+            num_comments: Optional[int],
         ) -> Dict[str, str]:
             """Preprocess Reddit post for sentiment analysis."""
             # Combine title and selftext
@@ -77,7 +92,9 @@ class TextPreprocessor:
             # Extract potential stock symbols
             min_length = self.ticker_extraction_config.get("min_length", 1)
             max_length = self.ticker_extraction_config.get("max_length", 5)
-            require_dollar = self.ticker_extraction_config.get("require_dollar_sign", True)
+            require_dollar = self.ticker_extraction_config.get(
+                "require_dollar_sign", True
+            )
 
             if require_dollar:
                 # Look for $TICKER format
@@ -85,18 +102,24 @@ class TextPreprocessor:
                 potential_symbols = re.findall(pattern, full_text)
             else:
                 # Look for standalone uppercase words that could be tickers
-                pattern = r"\b([A-Z]{" + str(min_length) + "," + str(max_length) + "})\b"
+                pattern = (
+                    r"\b([A-Z]{" + str(min_length) + "," + str(max_length) + "})\b"
+                )
                 potential_symbols = re.findall(pattern, full_text)
 
             # Filter to valid tickers
-            ticker_mentions = [tick for tick in potential_symbols if tick in self.valid_tickers]
+            ticker_mentions = [
+                tick for tick in potential_symbols if tick in self.valid_tickers
+            ]
 
             return {
                 "cleaned_text": text,
                 "tickers": ",".join(ticker_mentions),
                 "subreddit": subreddit.lower() if subreddit else "",
                 "score": str(score) if score is not None else "0",
-                "upvote_ratio": str(upvote_ratio) if upvote_ratio is not None else "0.5",
+                "upvote_ratio": str(upvote_ratio)
+                if upvote_ratio is not None
+                else "0.5",
                 "num_comments": str(num_comments) if num_comments is not None else "0",
             }
 
@@ -105,10 +128,10 @@ class TextPreprocessor:
 
 class SentimentAnalyzer:
     """Handle sentiment analysis for Reddit posts."""
-    
+
     def __init__(self, config: Dict[str, Any]):
         """Initialize the sentiment analyzer.
-        
+
         Args:
             config: Configuration dictionary for sentiment analysis
         """
@@ -120,7 +143,7 @@ class SentimentAnalyzer:
             .get("weights", {"vader": 0.3, "finbert": 0.7})
         )
         self.finbert_model, self.tokenizer = self._load_sentiment_models()
-        
+
     def _load_sentiment_models(self) -> Tuple[Optional[Any], Optional[Any]]:
         """Load optimized FinBERT model for Reddit finance posts."""
         try:
@@ -135,7 +158,9 @@ class SentimentAnalyzer:
             if model_path.startswith("models/"):
                 # Using local model
                 if not Path(model_path).exists():
-                    logger.warning(f"Local model not found at {model_path}, falling back to HuggingFace")
+                    logger.warning(
+                        f"Local model not found at {model_path}, falling back to HuggingFace"
+                    )
                     model_path = "ProsusAI/finbert"
 
             # Load model and tokenizer
@@ -144,7 +169,9 @@ class SentimentAnalyzer:
 
             # Apply quantization if configured
             if use_quantization:
-                logger.info("Applying quantization to FinBERT model for faster inference")
+                logger.info(
+                    "Applying quantization to FinBERT model for faster inference"
+                )
                 model = torch.quantization.quantize_dynamic(
                     model, {torch.nn.Linear}, dtype=torch.qint8
                 )
@@ -155,10 +182,10 @@ class SentimentAnalyzer:
             logger.error(f"Error loading sentiment models: {str(e)}")
             # Return None and handle gracefully in processing
             return None, None
-            
+
     def create_fast_sentiment_function(self):
         """Create fast sentiment analysis function using VADER."""
-        
+
         def fast_sentiment_analysis(cleaned_text: str) -> Dict[str, Union[str, float]]:
             """Fast sentiment analysis using VADER."""
             try:
@@ -198,44 +225,93 @@ class SentimentAnalyzer:
                     "neg": 0.0,
                     "neu": 1.0,
                 }
-        
+
         return fast_sentiment_analysis
-    
+
     def create_deep_sentiment_function(self):
         """Create deep sentiment analysis function using FinBERT."""
-        
-        def deep_sentiment_analysis(cleaned_text: str, subreddit: str) -> Dict[str, Union[str, float]]:
+
+        def deep_sentiment_analysis(
+            cleaned_text: str, subreddit: str
+        ) -> Dict[str, Union[str, float]]:
             """Deep sentiment analysis using FinBERT."""
             try:
-                if not cleaned_text:
+                if not cleaned_text or not self.finbert_model or not self.tokenizer:
                     return {"sentiment": "Neutral", "score": 0.5}
 
-                # This is a simplified implementation that won't use the actual model during serialization
-                # The actual model-based implementation happens in the driver, not workers
+                # Truncate text if too long
+                max_length = 512
+                if len(cleaned_text) > max_length * 4:  # Approximate character limit
+                    cleaned_text = cleaned_text[: max_length * 4]
 
-                # Return a placeholder result - actual models would be used in driver-side processing
-                sentiment_labels = ["Very Bearish", "Bearish", "Neutral", "Bullish", "Very Bullish"]
-                result = {"sentiment": "Neutral", "score": 0.5}
+                # Tokenize the text
+                inputs = self.tokenizer(
+                    cleaned_text,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=max_length,
+                )
 
-                # Add individual scores
-                for label in sentiment_labels:
-                    result[label] = 0.2  # Equal probabilities for each class
+                # Get model prediction
+                with torch.no_grad():
+                    outputs = self.finbert_model(**inputs)
+                    scores = (
+                        torch.nn.functional.softmax(outputs.logits, dim=1)
+                        .squeeze()
+                        .tolist()
+                    )
+
+                # FinBERT labels: negative (bearish), neutral, positive (bullish)
+                # Map to our sentiment labels
+                sentiment_labels = ["Bearish", "Neutral", "Bullish"]
+                result = {}
+
+                # Add scores for each label
+                for i, label in enumerate(sentiment_labels):
+                    result[label] = float(scores[i])
+
+                # Map to 5-class scale
+                if result["Bullish"] > 0.7:
+                    sentiment = "Very Bullish"
+                    score = 0.75
+                elif result["Bullish"] > 0.5:
+                    sentiment = "Bullish"
+                    score = 0.25
+                elif result["Bearish"] > 0.7:
+                    sentiment = "Very Bearish"
+                    score = -0.75
+                elif result["Bearish"] > 0.5:
+                    sentiment = "Bearish"
+                    score = -0.25
+                else:
+                    sentiment = "Neutral"
+                    score = 0.0
+
+                # Add primary sentiment and score
+                result["sentiment"] = sentiment
+                result["score"] = score
+
+                # Add additional labels for the 5-class scale
+                result["Very Bearish"] = result["Bearish"] * 0.7
+                result["Very Bullish"] = result["Bullish"] * 0.7
 
                 return result
+
             except Exception as e:
                 logger.error(f"Error in deep sentiment analysis: {str(e)}")
                 return {"sentiment": "Neutral", "score": 0.5}
-        
+
         return deep_sentiment_analysis
-    
+
     def create_weighted_sentiment_function(self):
         """Create weighted sentiment function combining VADER and FinBERT."""
-        
+
         def weighted_sentiment(
-            fast_sentiment: Dict[str, Any], 
-            deep_sentiment: Dict[str, Any], 
-            score: str, 
-            upvote_ratio: str
+            fast_sentiment: Dict[str, Any],
+            deep_sentiment: Dict[str, Any],
+            score: str,
+            upvote_ratio: str,
         ) -> Dict[str, Union[str, float]]:
             """Combine fast and deep sentiment with Reddit metrics weighting."""
             try:
@@ -254,7 +330,9 @@ class SentimentAnalyzer:
                 vader_weight = self.ensemble_weights.get("vader", 0.3)
                 finbert_weight = self.ensemble_weights.get("finbert", 0.7)
 
-                weighted_score = (vader_weight * fast_score) + (finbert_weight * deep_score)
+                weighted_score = (vader_weight * fast_score) + (
+                    finbert_weight * deep_score
+                )
 
                 # Apply Reddit metrics influence
                 final_score = weighted_score * score_factor * upvote_factor
@@ -279,15 +357,14 @@ class SentimentAnalyzer:
             except Exception as e:
                 logger.error(f"Error in weighted sentiment: {str(e)}")
                 return {"label": "Neutral", "score": 0.0, "confidence": 0.5}
-        
+
         return weighted_sentiment
-        
+
     def create_ticker_sentiment_function(self):
         """Create ticker-specific sentiment function."""
-        
+
         def ticker_specific_sentiment(
-            tickers_str: str, 
-            sentiment: Dict[str, Any]
+            tickers_str: str, sentiment: Dict[str, Any]
         ) -> List[Dict[str, str]]:
             """Create ticker-specific sentiment entries."""
             try:
@@ -298,17 +375,19 @@ class SentimentAnalyzer:
                 tickers = tickers_str.split(",")
                 for ticker in tickers:
                     if ticker:
-                        result.append({
-                            "ticker": ticker,
-                            "sentiment": sentiment.get("label", "Neutral"),
-                            "score": str(sentiment.get("score", 0.0)),
-                            "confidence": str(sentiment.get("confidence", 0.5)),
-                        })
+                        result.append(
+                            {
+                                "ticker": ticker,
+                                "sentiment": sentiment.get("label", "Neutral"),
+                                "score": str(sentiment.get("score", 0.0)),
+                                "confidence": str(sentiment.get("confidence", 0.5)),
+                            }
+                        )
                 return result
             except Exception as e:
                 logger.error(f"Error in ticker sentiment extraction: {str(e)}")
                 return []
-        
+
         return ticker_specific_sentiment
 
 
@@ -325,22 +404,21 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         self.reddit_schema = self._create_schema()
         self.valid_tickers = self._load_valid_tickers()
         self.subreddit_calibrations = self._load_subreddit_calibrations()
-        
+
         # Initialize specialized components
         self.preprocessor = TextPreprocessor(
-            self.valid_tickers, 
-            self.config.get("sentiment_analysis", {})
+            self.valid_tickers, self.config.get("sentiment_analysis", {})
         )
         self.sentiment_analyzer = SentimentAnalyzer(
             self.config.get("sentiment_analysis", {})
         )
-        
+
         # Register UDFs
         self._register_udfs()
 
     def _load_valid_tickers(self) -> Set[str]:
         """Load valid ticker symbols from configured file.
-        
+
         Returns:
             Set of valid ticker symbols
         """
@@ -354,7 +432,9 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         )
 
         if not tickers_file:
-            logger.warning("No tickers file specified in config. Using empty ticker set.")
+            logger.warning(
+                "No tickers file specified in config. Using empty ticker set."
+            )
             return valid_tickers
 
         try:
@@ -367,12 +447,12 @@ class RedditSentimentProcessor(BaseStreamProcessor):
                 logger.warning(f"Tickers file not found: {tickers_file}")
         except Exception as e:
             logger.error(f"Error loading ticker symbols: {str(e)}")
-        
+
         return valid_tickers
 
     def _load_subreddit_calibrations(self) -> Dict[str, Dict[str, float]]:
         """Load subreddit calibration values from configuration.
-        
+
         Returns:
             Dictionary mapping subreddit names to calibration parameters
         """
@@ -386,7 +466,7 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         if subreddit_config:
             logger.info(f"Loaded calibrations for {len(subreddit_config)} subreddits")
             return subreddit_config
-        
+
         # Fallback to defaults if not configured
         default_calibrations = {
             "wallstreetbets": {"bias": 0.1, "scale": 1.2},
@@ -402,26 +482,28 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         Returns:
             StructType schema for Reddit posts
         """
-        return StructType([
-            StructField("id", StringType(), True),
-            StructField("source", StringType(), True),
-            StructField("content_type", StringType(), True),
-            StructField("collection_timestamp", StringType(), True),
-            StructField("created_utc", IntegerType(), True),
-            StructField("author", StringType(), True),
-            StructField("score", IntegerType(), True),
-            StructField("subreddit", StringType(), True),
-            StructField("permalink", StringType(), True),
-            StructField("detected_symbols", ArrayType(StringType()), True),
-            StructField("created_datetime", StringType(), True),
-            StructField("title", StringType(), True),
-            StructField("selftext", StringType(), True),
-            StructField("url", StringType(), True),
-            StructField("is_self", BooleanType(), True),
-            StructField("upvote_ratio", FloatType(), True),
-            StructField("num_comments", IntegerType(), True),
-            StructField("collection_method", StringType(), True),
-        ])
+        return StructType(
+            [
+                StructField("id", StringType(), True),
+                StructField("source", StringType(), True),
+                StructField("content_type", StringType(), True),
+                StructField("collection_timestamp", StringType(), True),
+                StructField("created_utc", IntegerType(), True),
+                StructField("author", StringType(), True),
+                StructField("score", IntegerType(), True),
+                StructField("subreddit", StringType(), True),
+                StructField("permalink", StringType(), True),
+                StructField("detected_symbols", ArrayType(StringType()), True),
+                StructField("created_datetime", StringType(), True),
+                StructField("title", StringType(), True),
+                StructField("selftext", StringType(), True),
+                StructField("url", StringType(), True),
+                StructField("is_self", BooleanType(), True),
+                StructField("upvote_ratio", FloatType(), True),
+                StructField("num_comments", IntegerType(), True),
+                StructField("collection_method", StringType(), True),
+            ]
+        )
 
     def _register_udfs(self) -> None:
         """Register UDFs for sentiment analysis."""
@@ -429,27 +511,36 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         preprocess_func = self.preprocessor.create_preprocess_function()
         fast_sentiment_func = self.sentiment_analyzer.create_fast_sentiment_function()
         deep_sentiment_func = self.sentiment_analyzer.create_deep_sentiment_function()
-        weighted_sentiment_func = self.sentiment_analyzer.create_weighted_sentiment_function()
-        ticker_sentiment_func = self.sentiment_analyzer.create_ticker_sentiment_function()
+        weighted_sentiment_func = (
+            self.sentiment_analyzer.create_weighted_sentiment_function()
+        )
+        ticker_sentiment_func = (
+            self.sentiment_analyzer.create_ticker_sentiment_function()
+        )
 
         # Register UDFs with appropriate return types
         self.preprocess_udf = udf(preprocess_func, MapType(StringType(), StringType()))
-        self.fast_sentiment_udf = udf(fast_sentiment_func, MapType(StringType(), FloatType()))
-        self.deep_sentiment_udf = udf(deep_sentiment_func, MapType(StringType(), FloatType()))
-        self.weighted_sentiment_udf = udf(weighted_sentiment_func, MapType(StringType(), FloatType()))
+        self.fast_sentiment_udf = udf(
+            fast_sentiment_func, MapType(StringType(), FloatType())
+        )
+        self.deep_sentiment_udf = udf(
+            deep_sentiment_func, MapType(StringType(), FloatType())
+        )
+        self.weighted_sentiment_udf = udf(
+            weighted_sentiment_func, MapType(StringType(), FloatType())
+        )
         self.explode_ticker_sentiment_udf = udf(
-            ticker_sentiment_func, 
-            ArrayType(MapType(StringType(), StringType()))
+            ticker_sentiment_func, ArrayType(MapType(StringType(), StringType()))
         )
 
         logger.info("UDFs registered successfully")
 
     def process_reddit_posts(self, kafka_df: DataFrame) -> DataFrame:
         """Process Reddit posts from Kafka with sentiment analysis.
-        
+
         Args:
             kafka_df: DataFrame containing raw Kafka messages
-            
+
         Returns:
             Processed DataFrame with sentiment analysis results
         """
@@ -461,7 +552,9 @@ class RedditSentimentProcessor(BaseStreamProcessor):
         spark.udf.register("fast_sentiment_udf", self.fast_sentiment_udf)
         spark.udf.register("deep_sentiment_udf", self.deep_sentiment_udf)
         spark.udf.register("weighted_sentiment_udf", self.weighted_sentiment_udf)
-        spark.udf.register("explode_ticker_sentiment_udf", self.explode_ticker_sentiment_udf)
+        spark.udf.register(
+            "explode_ticker_sentiment_udf", self.explode_ticker_sentiment_udf
+        )
 
         # Parse JSON from Kafka value field
         reddit_df = (
