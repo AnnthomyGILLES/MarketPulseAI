@@ -33,6 +33,8 @@ tools/
 .github/
 .vscode/
 .verdaccio/
+.venv/
+.idea/
 
 !apps/manifest-demo/*.ts
 
@@ -56,3 +58,4 @@ typedoc.base.json
 commitlint.config.js
 .eslintignore
 commit-gen.js
+*.log
