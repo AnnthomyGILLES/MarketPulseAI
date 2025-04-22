@@ -1,0 +1,13 @@
+{
+  "_id": {
+    "$oid": "6807e5270398a43e09593347"
+  },
+  "id": "1jygokx",
+  "processing_timestamp": {
+    "$date": "2025-04-22T18:39:40.348Z"
+  },
+  "ticker": "AAPL",
+  "sentiment": "Bearish",
+  "score": "-0.42",
+  "confidence": "0.76"
+} 

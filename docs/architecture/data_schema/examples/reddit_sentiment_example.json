@@ -1,0 +1,61 @@
+{
+  "_id": {
+    "$oid": "6807e5260398a43e09593344"
+  },
+  "id": "1jygokx",
+  "source": "reddit",
+  "content_type": "post",
+  "collection_timestamp": "2025-04-19T01:11:03.891446Z",
+  "created_utc": 1744574736,
+  "author": "postpartum-blues",
+  "score": 4759,
+  "subreddit": "investing",
+  "permalink": "https://www.reddit.com/r/investing/comments/1jygokx/there_was_no_tariff_exception_announced_on_friday/",
+  "detected_symbols": [],
+  "created_datetime": "2025-04-13T20:05:36Z",
+  "title": "\"There was no tariff 'exception' announced on Friday.\" Donald Trump",
+  "selftext": "What the actual fuck? How is anyone supposed to do business under this administration? Literally in under 3 days we went from exceptions announced for smartphones, laptop computers, hard drives and computer processors to having that pulled back because of one schizophrenic TruthSocial post? \n\nhttps://truthsocial.com/@realDonaldTrump/posts/114332337028519855",
+  "url": "https://www.reddit.com/r/investing/comments/1jygokx/there_was_no_tariff_exception_announced_on_friday/",
+  "is_self": true,
+  "upvote_ratio": 0.9700000286102295,
+  "num_comments": 532,
+  "collection_method": "top/week",
+  "processing_timestamp": {
+    "$date": "2025-04-22T18:39:40.348Z"
+  },
+  "preprocessed": {
+    "subreddit": "investing",
+    "cleaned_text": "\"there was no tariff 'exception' announced on friday.\" donald trump what the actual fuck? how is anyone supposed to do business under this administration? literally in under 3 days we went from exceptions announced for smartphones, laptop computers, hard drives and computer processors to having that pulled back because of one schizophrenic truthsocial post? \n\n",
+    "score": "4759",
+    "upvote_ratio": "0.9700000286102295",
+    "num_comments": "532",
+    "tickers": ""
+  },
+  "fast_sentiment": {
+    "neu": 0.8700000047683716,
+    "compound": -0.7677000164985657,
+    "sentiment": "Bearish",
+    "pos": 0,
+    "neg": 0.12999999523162842
+  },
+  "deep_sentiment": {
+    "Very Bearish": 0.20000000298023224,
+    "Very Bullish": 0.20000000298023224,
+    "Neutral": 0.20000000298023224,
+    "Bearish": 0.20000000298023224,
+    "sentiment": "Bearish",
+    "score": 0.5,
+    "Bullish": 0.20000000298023224
+  },
+  "sentiment": {
+    "score": -0.3160992980003357,
+    "label": "Bearish",
+    "confidence": 0.6160992980003357
+  },
+  "ticker_sentiments": [],
+  "sentiment_label": "Bearish",
+  "sentiment_score": -0.3160992980003357,
+  "sentiment_confidence": 0.6160992980003357,
+  "market_impact_estimate": "moderate",
+  "topics": ["tariffs", "politics", "trade_policy", "technology_sector"]
+} 
