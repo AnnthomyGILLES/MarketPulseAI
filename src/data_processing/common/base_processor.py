@@ -84,6 +84,7 @@ class BaseStreamProcessor:
             .config("spark.sql.session.timeZone", "UTC")
             .config("spark.streaming.kafka.consumer.cache.enabled", "false")
             .config("spark.streaming.kafka.consumer.poll.ms", "60000")
+            .config("spark.streaming.kafka.consumer.poll.thread.SOFT_INTERRUPT_ENABLED", "true")
         )
 
         # Add MongoDB configurations if present
