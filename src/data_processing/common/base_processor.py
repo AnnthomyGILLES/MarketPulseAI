@@ -4,6 +4,7 @@ from typing import Dict, Any
 import yaml
 from loguru import logger
 from pyspark.sql import SparkSession, DataFrame
+import redis
 
 
 class BaseStreamProcessor:
@@ -17,6 +18,7 @@ class BaseStreamProcessor:
         """
         self.config = self.load_config(config_path)
         self.spark = self._init_spark_session()
+        self.redis_client = self._init_redis_client() if self.config.get("redis", {}).get("enabled", False) else None
 
     def load_config(self, config_path: str) -> Dict[str, Any]:
         """Load configuration from YAML file.
@@ -49,6 +51,21 @@ class BaseStreamProcessor:
 
             # Add Kafka config to main config
             config["kafka"] = kafka_config
+            
+        # Load sentiment analysis config if a path is specified
+        if "sentiment_config_path" in config:
+            sentiment_config_path = config["sentiment_config_path"]
+            sentiment_config_file = Path(sentiment_config_path)
+
+            if not sentiment_config_file.exists():
+                logger.error(f"Sentiment configuration file not found: {sentiment_config_path}")
+                raise FileNotFoundError(f"Sentiment configuration file not found: {sentiment_config_path}")
+                
+            with open(sentiment_config_file, "r") as f:
+                sentiment_config = yaml.safe_load(f)
+                
+            # Add sentiment config to main config
+            config["sentiment_analysis"] = sentiment_config
 
         return config
 
@@ -86,7 +103,6 @@ class BaseStreamProcessor:
             spark_builder = spark_builder.config("spark.mongodb.output.uri", mongo_uri)
             spark_builder = spark_builder.config("spark.mongodb.input.uri", mongo_uri)
 
-
         # Add required packages
         packages = [
             "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1",
@@ -100,6 +116,64 @@ class BaseStreamProcessor:
         spark.sparkContext.setLogLevel(log_level)
 
         return spark
+        
+    def _init_redis_client(self) -> redis.Redis:
+        """Initialize Redis client for caching if enabled.
+        
+        Returns:
+            Redis client instance or None if disabled
+        """
+        redis_config = self.config.get("redis", {})
+        if not redis_config.get("enabled", False):
+            logger.info("Redis caching disabled")
+            return None
+            
+        logger.info("Initializing Redis client for caching")
+        try:
+            host = redis_config.get("host", "localhost")
+            port = redis_config.get("port", 6379)
+            db = redis_config.get("db", 0)
+            password = redis_config.get("password")
+            
+            client = redis.Redis(
+                host=host,
+                port=port,
+                db=db,
+                password=password,
+                socket_timeout=redis_config.get("socket_timeout", 5)
+            )
+            
+            # Test connection
+            client.ping()
+            logger.info(f"Redis client connected to {host}:{port}/{db}")
+            return client
+        except Exception as e:
+            logger.warning(f"Failed to connect to Redis: {str(e)}. Caching will be disabled.")
+            return None
+            
+    def get_cached_or_compute(self, key, compute_func, ttl=3600):
+        """Get value from cache or compute it.
+        
+        Args:
+            key: Cache key
+            compute_func: Function to compute value if not in cache
+            ttl: Cache TTL in seconds
+            
+        Returns:
+            Cached or computed value
+        """
+        if not self.redis_client:
+            return compute_func()
+            
+        cached_value = self.redis_client.get(key)
+        if cached_value:
+            logger.debug(f"Cache hit for key: {key}")
+            return cached_value
+            
+        logger.debug(f"Cache miss for key: {key}")
+        value = compute_func()
+        self.redis_client.setex(key, ttl, value)
+        return value
 
     def read_from_kafka(self, topics: str) -> DataFrame:
         """Read data from Kafka topics.
@@ -124,7 +198,6 @@ class BaseStreamProcessor:
             .option("failOnDataLoss", "false")
             .load()
         )
-
 
     def write_to_mongodb(self, df: DataFrame, database: str, collection: str,
                            checkpoint_location: str, output_mode: str = "append") -> None:
@@ -152,7 +225,6 @@ class BaseStreamProcessor:
         mongo_uri = f"mongodb://{host}:{port}/{database}"
         if username and password:
             mongo_uri = f"mongodb://{username}:{password}@{host}:{port}/{database}?authSource=admin"
-
 
         # Writing using foreachBatch for more control and compatibility
         def write_batch_to_mongo(batch_df, batch_id):
