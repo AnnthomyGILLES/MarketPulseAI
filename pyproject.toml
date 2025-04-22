@@ -9,7 +9,7 @@ dependencies = [
     "tweepy[async]<5.0.0,>=4.15.0",
     "kafka-python<3.0.0,>=2.0.5",
     "loguru<1.0.0,>=0.7.3",
-    "pyspark<4.0.0,>=3.5.5",
+    "pyspark>=3.5.5,<4.0.0",
     "ruff>=0.9.9,<1.0.0",
     "transformers<5.0.0,>=4.50.0",
     "nltk<4.0.0,>=3.9.1",
@@ -30,6 +30,8 @@ dependencies = [
     "uvicorn>=0.34.2",
     "motor>=3.7.0",
     "redis>=5.2.1",
+    "setuptools>=79.0.0",
+    "wheel>=0.45.1",
 ]
 name = "marketpulseai"
 version = "0.1.0"
