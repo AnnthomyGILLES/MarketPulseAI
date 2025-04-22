@@ -12,6 +12,7 @@ sentiment_analysis:
       model_path: "models/finbert-sentiment"  # Path to the FinBERT model
       max_sequence_length: 512                # Maximum token sequence length
       batch_size: 16                          # Batch size for inference
+      quantization: true                      # Use quantized model for faster inference
 
     # VADER configuration
     vader:
@@ -20,8 +21,53 @@ sentiment_analysis:
     # Ensemble configuration
     ensemble:
       weights:
-        finbert: 0.6  # Weight for FinBERT in ensemble
-        vader: 0.4    # Weight for VADER in ensemble
+        finbert: 0.7  # Weight for FinBERT in ensemble
+        vader: 0.3    # Weight for VADER in ensemble
+
+  # Reddit specific configuration
+  reddit:
+    # Subreddit calibration values to adjust for subreddit-specific sentiment baselines
+    subreddit_calibration:
+      wallstreetbets:
+        bias: 0.1    # Positive bias - slightly more bullish baseline
+        scale: 1.2   # Higher volatility in sentiment
+      stocks:
+        bias: 0.0    # Neutral baseline
+        scale: 1.0   # Standard scale
+      investing:
+        bias: -0.05  # Slightly more bearish baseline
+        scale: 0.9   # Lower volatility in sentiment
+      options:
+        bias: 0.15   # More bullish baseline
+        scale: 1.3   # Higher volatility
+      pennystocks:
+        bias: 0.2    # More bullish baseline
+        scale: 1.5   # Much higher volatility
+        
+    # Confidence scoring based on post metadata
+    confidence_factors:
+      min_score: 5           # Minimum score (upvotes) for full confidence
+      min_comments: 3        # Minimum comments for full confidence
+      upvote_ratio_threshold: 0.6  # Upvote ratio threshold for good consensus
+      
+    # Post quality scoring
+    quality_scoring:
+      min_text_length: 50    # Minimum text length for quality content
+      ideal_text_length: 500 # Ideal text length for maximum quality score
+      emoji_penalty: 0.1     # Penalty for excessive emoji use
+      url_bonus: 0.05        # Bonus for including URLs (references)
+      
+    # Ticker extraction
+    ticker_extraction:
+      min_length: 1          # Minimum ticker length
+      max_length: 5          # Maximum ticker length
+      require_dollar_sign: true  # Require $ before ticker symbol
+      exclude_common_words: true # Exclude common words that look like tickers
+      
+    # Meme stock language
+    meme_language:
+      dictionary_path: "config/meme_stock_terms.json"  # Path to meme stock dictionary
+      impact_weight: 0.3     # Weight of meme language in sentiment
 
   # Preprocessing configuration
   preprocessing:
@@ -44,6 +90,8 @@ sentiment_analysis:
     cache_enabled: true           # Enable results caching
     cache_ttl: 3600               # Cache time-to-live in seconds (1 hour)
     logging_level: "INFO"         # Logging level (DEBUG, INFO, WARNING, ERROR)
+    batch_size: 100               # Process posts in batches of this size
+    window_duration_ms: 500       # Processing window duration in milliseconds
 
 # Aggregation configuration
 aggregation:
@@ -73,15 +121,16 @@ aggregation:
 # Kafka configuration for data ingestion
 kafka:
   enabled: true
-  bootstrap_servers: "kafka:9092"
+  bootstrap_servers: "redpanda:29092"
   group_id: "sentiment-analysis-group"
   auto_offset_reset: "earliest"
   enable_auto_commit: true
   poll_timeout_ms: 1000
   topics:
-    - "social-media.twitter"
-    - "social-media.reddit"
-    - "finance.news"
+    social_media_reddit_validated: "social-media-reddit-posts-validated"
+    social_media_reddit_comments_validated: "social-media-reddit-comments-validated"
+    twitter: "social-media.twitter"
+    news: "finance.news"
 
   # Security configuration (optional)
   security:
@@ -100,28 +149,17 @@ redis:
   password: "${REDIS_PASSWORD}"
   socket_timeout: 5
 
-# Database configuration for sentiment storage
-database:
-  engine: "cassandra"
-  hosts: ["cassandra-1", "cassandra-2", "cassandra-3"]
-  keyspace: "market_pulse"
-  replication_factor: 3
-  consistency_level: "LOCAL_QUORUM"
-  timeout: 10
+# MongoDB configuration for sentiment storage
+mongodb:
+  connection_host: "mongodb"
+  connection_port: 27017
+  database: "social_media"
+  collection: "reddit_sentiment"
+  ticker_collection: "ticker_sentiment"
+  auth_username: "mongodb_user"
+  auth_password: "mongodb_password"
 
-  # Connection pooling
-  connection_pool:
-    min_connections: 5
-    max_connections: 20
-
-# Batch processing configuration
-batch_processing:
-  enabled: true
-  interval_seconds: 300                  # Run batch jobs every 5 minutes
-  aggregate_market_sentiment: true       # Periodically calculate market sentiment
-  market_timeframe_hours: 24             # Timeframe for market sentiment aggregation
-  detect_sentiment_shifts: true          # Detect significant sentiment shifts
-  shift_timeframe_hours: 48              # Timeframe for shift detection
-  shift_threshold: 0.15                  # Threshold for significant shifts
-  top_tickers_count: 50                  # Number of top tickers to monitor
-  cache_ttl: 1800                        # Cache TTL for batch results (30 minutes)
+# Path settings
+paths:
+  tickers_file: "config/valid_tickers.txt"  # Path to file containing valid ticker symbols
+  checkpoint_location: "/tmp/reddit_sentiment_checkpoint"  # Checkpoint location for Spark streaming
