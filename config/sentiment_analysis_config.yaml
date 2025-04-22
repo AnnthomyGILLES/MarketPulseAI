@@ -9,7 +9,9 @@ sentiment_analysis:
 
     # FinBERT configuration
     finbert:
-      model_path: "models/finbert-sentiment"  # Path to the FinBERT model
+      model_path: "ProsusAI/finbert"  # Use the Hugging Face hosted FinBERT model
+      use_pipeline: true             # Load model via transformers pipeline
+      pipeline_task: "text-classification"
       max_sequence_length: 512                # Maximum token sequence length
       batch_size: 16                          # Batch size for inference
       quantization: true                      # Use quantized model for faster inference
@@ -43,27 +45,27 @@ sentiment_analysis:
       pennystocks:
         bias: 0.2    # More bullish baseline
         scale: 1.5   # Much higher volatility
-        
+
     # Confidence scoring based on post metadata
     confidence_factors:
       min_score: 5           # Minimum score (upvotes) for full confidence
       min_comments: 3        # Minimum comments for full confidence
       upvote_ratio_threshold: 0.6  # Upvote ratio threshold for good consensus
-      
+
     # Post quality scoring
     quality_scoring:
       min_text_length: 50    # Minimum text length for quality content
       ideal_text_length: 500 # Ideal text length for maximum quality score
       emoji_penalty: 0.1     # Penalty for excessive emoji use
       url_bonus: 0.05        # Bonus for including URLs (references)
-      
+
     # Ticker extraction
     ticker_extraction:
       min_length: 1          # Minimum ticker length
       max_length: 5          # Maximum ticker length
       require_dollar_sign: true  # Require $ before ticker symbol
       exclude_common_words: true # Exclude common words that look like tickers
-      
+
     # Meme stock language
     meme_language:
       dictionary_path: "config/meme_stock_terms.json"  # Path to meme stock dictionary
@@ -121,7 +123,7 @@ aggregation:
 # Kafka configuration for data ingestion
 kafka:
   enabled: true
-  bootstrap_servers: "redpanda:29092"
+  bootstrap_servers_container: [ "redpanda:29092" ]
   group_id: "sentiment-analysis-group"
   auto_offset_reset: "earliest"
   enable_auto_commit: true
@@ -132,21 +134,12 @@ kafka:
     twitter: "social-media.twitter"
     news: "finance.news"
 
-  # Security configuration (optional)
-  security:
-    enabled: false
-    protocol: "sasl_ssl"
-    sasl_mechanism: "PLAIN"
-    sasl_username: "${KAFKA_USERNAME}"
-    sasl_password: "${KAFKA_PASSWORD}"
-
 # Redis configuration for caching
 redis:
   enabled: true
   host: "redis"
   port: 6379
   db: 0
-  password: "${REDIS_PASSWORD}"
   socket_timeout: 5
 
 # MongoDB configuration for sentiment storage
