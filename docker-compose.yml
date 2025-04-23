@@ -102,7 +102,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - HOME=/root
-      - TRANSFORMERS_CACHE=/root/.cache
+      - HF_HOME=/root/.cache
     networks:
       - kafka-network
     depends_on:
