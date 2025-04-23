@@ -32,6 +32,7 @@ dependencies = [
     "redis>=5.2.1",
     "setuptools>=79.0.0",
     "wheel>=0.45.1",
+    "torch>=2.6.0",
 ]
 name = "marketpulseai"
 version = "0.1.0"
