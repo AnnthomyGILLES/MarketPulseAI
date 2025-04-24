@@ -2,15 +2,16 @@
 NewsAPI collector for financial news data.
 
 Fetches financial news from NewsAPI.org and publishes to Kafka.
+Uses Pendulum for improved datetime handling.
 """
 
 import os
 import time
 import json
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Set
 
+import pendulum
 import requests
 from loguru import logger
 
@@ -173,11 +174,10 @@ class NewsAPICollector(BaseCollector):
         page_size = self.config["collection"]["page_size"]
         cooldown = self.config["collection"]["request_cooldown"]
 
-        # Calculate date range
-        from_date = (datetime.utcnow() - timedelta(days=days_to_fetch)).strftime(
-            "%Y-%m-%d"
-        )
-        to_date = datetime.utcnow().strftime("%Y-%m-%d")
+        # Calculate date range using pendulum
+        now = pendulum.now("UTC")
+        from_date = now.subtract(days=days_to_fetch).format("YYYY-MM-DD")
+        to_date = now.format("YYYY-MM-DD")
 
         # Build request parameters
         params = {
@@ -191,29 +191,48 @@ class NewsAPICollector(BaseCollector):
         }
 
         # Add optional parameters if configured
-        if sources := self.config["filters"]["sources"]:
+        if sources := self.config["filters"].get("sources", []):
             params["sources"] = ",".join(sources)
 
-        if categories := self.config["filters"]["categories"]:
-            params["category"] = categories[
-                0
-            ]  # NewsAPI only supports one category per request
+        if domains := self.config["filters"].get("domains", []):
+            params["domains"] = ",".join(domains)
 
-        if countries := self.config["filters"]["countries"]:
-            params["country"] = countries[
-                0
-            ]  # NewsAPI only supports one country per request
+        # Note: For the /everything endpoint, category and country aren't supported
+        # For /top-headlines, we would use these:
+        endpoint = "/everything"
+        if self.config.get("use_top_headlines", False):
+            endpoint = "/top-headlines"
+            if categories := self.config["filters"].get("categories", []):
+                params["category"] = categories[
+                    0
+                ]  # NewsAPI only supports one category per request
+
+            if countries := self.config["filters"].get("countries", []):
+                params["country"] = countries[
+                    0
+                ]  # NewsAPI only supports one country per request
 
         # Make the API request
         logger.info(f"Fetching news for query: '{query}' from {from_date} to {to_date}")
 
         try:
-            response = requests.get(f"{self.base_url}/everything", params=params)
+            response = requests.get(
+                f"{self.base_url}{endpoint}", params=params, timeout=30
+            )
             response.raise_for_status()
 
             result = response.json()
             articles = result.get("articles", [])
             logger.info(f"Retrieved {len(articles)} articles for query '{query}'")
+
+            # Add request status info
+            if "totalResults" in result:
+                logger.info(f"Total results available: {result['totalResults']}")
+
+            # Check for API limits and warnings
+            if response.headers.get("X-Api-Remaining"):
+                remaining_requests = response.headers.get("X-Api-Remaining")
+                logger.debug(f"API requests remaining: {remaining_requests}")
 
             # Apply cooldown to avoid rate limits
             if cooldown > 0:
@@ -223,8 +242,15 @@ class NewsAPICollector(BaseCollector):
 
         except requests.exceptions.RequestException as e:
             logger.error(f"API request failed for query '{query}': {e}")
-            if hasattr(e.response, "text"):
+            if hasattr(e, "response") and e.response is not None:
+                logger.error(f"Response status: {e.response.status_code}")
                 logger.error(f"Response content: {e.response.text}")
+
+                # Handle rate limiting
+                if e.response.status_code == 429:
+                    retry_after = int(e.response.headers.get("Retry-After", "60"))
+                    logger.warning(f"Rate limited. Waiting for {retry_after} seconds")
+                    time.sleep(retry_after)
             return []
 
     def _process_articles(self, articles: List[Dict[str, Any]]) -> None:
@@ -281,8 +307,8 @@ class NewsAPICollector(BaseCollector):
         # Create a copy to avoid modifying the original
         enriched = article.copy()
 
-        # Add collection metadata
-        enriched["collected_at"] = datetime.utcnow().isoformat()
+        # Add collection metadata using pendulum for timestamp
+        enriched["collected_at"] = pendulum.now("UTC").isoformat()
         enriched["collector_id"] = self.collector_name
 
         # Add source type
@@ -291,12 +317,24 @@ class NewsAPICollector(BaseCollector):
         # Standardize dates if present
         if published_at := enriched.get("publishedAt"):
             try:
-                # Ensure consistent datetime format
-                dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+                # Parse with pendulum for better timezone handling
+                dt = pendulum.parse(published_at)
                 enriched["publishedAt"] = dt.isoformat()
+
+                # Add additional date fields that might be useful
+                enriched["publishedDate"] = dt.format("YYYY-MM-DD")
+                enriched["publishedTime"] = dt.format("HH:mm:ss")
+                enriched["publishedTimezone"] = dt.timezone_name
             except (ValueError, TypeError):
                 # Keep original if parsing fails
                 pass
+
+        # Add content statistics if content exists
+        if content := enriched.get("content"):
+            enriched["contentStats"] = {
+                "length": len(content),
+                "wordCount": len(content.split()),
+            }
 
         return enriched
 
@@ -319,6 +357,14 @@ class NewsAPICollector(BaseCollector):
 
 
 if __name__ == "__main__":
+    # Set up logger
+    logger.add(
+        "logs/newsapi_collector_{time}.log",
+        rotation="500 MB",
+        retention="10 days",
+        level="INFO",
+    )
+
     # Resolve paths for configuration files using Pathlib
     base_path = (
         Path(__file__).resolve().parents[4]
@@ -327,9 +373,9 @@ if __name__ == "__main__":
     kafka_config_path = (
         base_path / "config/kafka/kafka_config.yaml"
     )  # Optional, can be set to None if not needed
-    
+
     collector = NewsAPICollector(config_path=str(config_path), kafka_config_path=str(kafka_config_path))
     try:
         collector.collect()
     except KeyboardInterrupt:
-        logger.info("Collector stopped by user") 
+        logger.info("Collector stopped by user")
