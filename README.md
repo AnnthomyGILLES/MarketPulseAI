@@ -151,7 +151,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## 📋 Project Structure
 At the end, the project should look like this:
 ```
-MarketPulseAI/
+stock-market-analysis-system/
 │
 ├── .env                          # Environment variables (gitignored)
 ├── .gitignore                    # Git ignore rules
@@ -165,29 +165,45 @@ MarketPulseAI/
 │   ├── spark/                    # Spark configuration
 │   ├── redis/                    # Redis configuration
 │   ├── database/                 # Database schema and migrations
-│   └── logging/                  # Logging configuration
+│   ├── logging/                  # Logging configuration
+│   └── apis/                     # API configuration files
+│       ├── newsapi.yaml          # NewsAPI configuration
+│       └── other_apis.yaml       # Other API configurations
 │
 ├── data/                         # Data storage (gitignored)
 │   ├── raw/                      # Raw data from APIs
+│   │   ├── market/               # Raw market data
+│   │   ├── social/               # Raw social media data
+│   │   └── news/                 # Raw news data from NewsAPI
 │   ├── processed/                # Processed data
+│   │   ├── market/               # Processed market data
+│   │   ├── social/               # Processed social media data
+│   │   └── news/                 # Processed news data
 │   ├── models/                   # Saved ML models
 │   └── cache/                    # Cached data
 │
 ├── notebooks/                    # Jupyter notebooks for experimentation
 │   ├── market_data_exploration/  # Market data analysis
 │   ├── sentiment_analysis/       # Sentiment analysis exploration
+│   ├── news_data_exploration/    # News data analysis notebooks
 │   ├── model_development/        # ML model development
 │   └── visualization/            # Visualization experiments
 │
 ├── docs/                         # Documentation
 │   ├── architecture/             # System architecture docs
 │   ├── api/                      # API documentation
+│   │   └── newsapi/              # NewsAPI integration docs
 │   ├── user_guide/               # User documentation
 │   └── development/              # Development guidelines
 │
 ├── scripts/                      # Utility scripts
 │   ├── setup/                    # Setup scripts
 │   ├── data_collection/          # Data collection scripts
+│   │   ├── market/               # Market data collection scripts
+│   │   ├── social/               # Social media collection scripts
+│   │   └── news/                 # News data collection scripts
+│   │       ├── newsapi_fetcher.py # NewsAPI data fetcher
+│   │       └── news_backfill.py  # Historical news data backfill
 │   ├── backup/                   # Backup scripts
 │   └── maintenance/              # Maintenance scripts
 │
@@ -195,17 +211,23 @@ MarketPulseAI/
 │   ├── unit/                     # Unit tests
 │   │   ├── market_data/          # Market data tests
 │   │   ├── sentiment/            # Sentiment analysis tests
+│   │   ├── news/                 # News data collection tests
 │   │   ├── prediction/           # Prediction engine tests
 │   │   └── api/                  # API tests
 │   ├── integration/              # Integration tests
+│   │   └── news_pipeline_test.py # News data pipeline integration test
 │   ├── performance/              # Performance tests
 │   └── fixtures/                 # Test fixtures
+│       └── news/                 # News data test fixtures
 │
 ├── monitoring/                   # System monitoring
 │   ├── health_checks/            # Health check scripts
+│   │   └── news_api_health.py    # NewsAPI health check
 │   ├── metrics/                  # Metrics collection
+│   │   └── news_metrics.py       # News data collection metrics
 │   ├── alerts/                   # Alert configuration
 │   └── dashboards/               # Monitoring dashboards
+│       └── news_dashboard.json   # News data monitoring dashboard
 │
 ├── src/                          # Source code
 │   ├── data_collection/          # Data collection modules
@@ -216,11 +238,21 @@ MarketPulseAI/
 │   │   │   ├── parsers/          # Data parsers
 │   │   │   └── validation/       # Data validation
 │   │   │
-│   │   └── social_media/         # Social media collection
+│   │   ├── social_media/         # Social media collection
+│   │   │   ├── __init__.py
+│   │   │   ├── twitter/          # Twitter data collection
+│   │   │   └── reddit/           # Reddit data collection
+│   │   │
+│   │   │
+│   │   └── news/                 # News data collection (NEW)
 │   │       ├── __init__.py
-│   │       ├── twitter/          # Twitter data collection
-│   │       ├── reddit/           # Reddit data collection
-│   │       └── news/             # Financial news collection
+│   │       ├── collectors/       # News data collectors
+│   │       │   ├── __init__.py
+│   │       │   ├── newsapi_collector.py  # NewsAPI collector
+│   │       │   └── base_collector.py     # Base news collector class
+│   │       └── validation/       # News data validation
+│   │           ├── __init__.py
+│   │           └── news_validator.py     # News data validator
 │   │
 │   ├── data_processing/          # Data processing modules
 │   │   ├── __init__.py
@@ -230,15 +262,32 @@ MarketPulseAI/
 │   │   │   ├── feature_eng/      # Feature engineering
 │   │   │   └── indicators/       # Technical indicators
 │   │   │
-│   │   └── sentiment/            # Sentiment processing
+│   │   ├── sentiment/            # Sentiment processing
+│   │   │   ├── __init__.py
+│   │   │   ├── preprocessing/    # Text preprocessing
+│   │   │   ├── analysis/         # Sentiment analysis
+│   │   │   └── aggregation/      # Sentiment aggregation
+│   │   │
+│   │   └── news/                 # News data processing (NEW)
 │   │       ├── __init__.py
-│   │       ├── preprocessing/    # Text preprocessing
-│   │       ├── analysis/         # Sentiment analysis
-│   │       └── aggregation/      # Sentiment aggregation
+│   │       ├── cleaning/         # News cleaning
+│   │       │   ├── __init__.py
+│   │       │   └── news_cleaner.py      # News text cleaner
+│   │       ├── enrichment/       # News data enrichment
+│   │       │   ├── __init__.py
+│   │       │   ├── company_matcher.py   # Match companies to news
+│   │       │   └── topic_classifier.py  # News topic classifier
+│   │       └── aggregation/      # News data aggregation
+│   │           ├── __init__.py
+│   │           └── news_aggregator.py   # News aggregation by symbol/sector
 │   │
 │   ├── storage/                  # Data storage modules
 │   │   ├── __init__.py
 │   │   ├── database/             # Database operations
+│   │   │   ├── __init__.py
+│   │   │   ├── market_db.py      # Market data DB operations
+│   │   │   ├── social_db.py      # Social media DB operations
+│   │   │   └── news_db.py        # News data DB operations (NEW)
 │   │   ├── streaming/            # Streaming data handlers
 │   │   ├── cache/                # Caching operations
 │   │   └── models/               # Model storage
@@ -255,6 +304,9 @@ MarketPulseAI/
 │   │   ├── sentiment_models/     # Sentiment models
 │   │   │   ├── __init__.py
 │   │   │   ├── classification/   # Sentiment classification
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── social_classifier.py  # Social media classifier
+│   │   │   │   └── news_classifier.py    # News content classifier (NEW)
 │   │   │   └── evaluation/       # Sentiment model evaluation
 │   │   │
 │   │   └── combined_models/      # Combined prediction models
@@ -265,7 +317,21 @@ MarketPulseAI/
 │   ├── streaming/                # Streaming data processing
 │   │   ├── __init__.py
 │   │   ├── kafka/                # Kafka producers/consumers
+│   │   │   ├── __init__.py
+│   │   │   ├── producers/        # Kafka producers
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── market_producer.py    # Market data producer
+│   │   │   │   ├── social_producer.py    # Social media producer
+│   │   │   │   └── news_producer.py      # News data producer (NEW)
+│   │   │   └── consumers/        # Kafka consumers
+│   │   │       ├── __init__.py
+│   │   │       ├── market_consumer.py    # Market data consumer
+│   │   │       ├── social_consumer.py    # Social media consumer
+│   │   │       └── news_consumer.py      # News data consumer (NEW)
+│   │   │
 │   │   └── spark/                # Spark streaming jobs
+│   │       ├── __init__.py
+│   │       └── news_processing_job.py    # News processing Spark job (NEW)
 │   │
 │   ├── prediction_engine/        # Prediction engine
 │   │   ├── __init__.py
@@ -276,7 +342,13 @@ MarketPulseAI/
 │   ├── api/                      # API layer
 │   │   ├── __init__.py
 │   │   ├── routes/               # API routes
+│   │   │   ├── __init__.py
+│   │   │   ├── market_routes.py  # Market data routes
+│   │   │   ├── social_routes.py  # Social media routes
+│   │   │   └── news_routes.py    # News data routes (NEW)
 │   │   ├── serializers/          # Data serializers
+│   │   │   ├── __init__.py
+│   │   │   └── news_serializer.py # News data serializer (NEW)
 │   │   ├── auth/                 # Authentication
 │   │   └── middleware/           # API middleware
 │   │
@@ -290,8 +362,14 @@ MarketPulseAI/
 │   │       ├── public/           # Public assets
 │   │       ├── src/              # Frontend source code
 │   │       │   ├── components/   # UI components
+│   │       │   │   └── news/     # News components (NEW)
+│   │       │   │       ├── NewsCard.js       # News item card
+│   │       │   │       ├── NewsStream.js     # News stream component
+│   │       │   │       └── NewsAnalytics.js  # News analytics component
 │   │       │   ├── pages/        # Page components
+│   │       │   │   └── NewsPage.js # News analysis page (NEW)
 │   │       │   ├── services/     # API services
+│   │       │   │   └── newsService.js # News API service (NEW)
 │   │       │   ├── hooks/        # Custom hooks
 │   │       │   ├── utils/        # Utility functions
 │   │       │   └── App.js        # Main app component
@@ -305,7 +383,11 @@ MarketPulseAI/
 │   │   ├── config/               # Configuration utilities
 │   │   ├── validation/           # Data validation
 │   │   ├── datetime/             # Date/time utilities
-│   │   └── metrics/              # Metrics utilities
+│   │   ├── metrics/              # Metrics utilities
+│   │   └── api/                  # API utilities (NEW)
+│   │       ├── __init__.py
+│   │       ├── rate_limiter.py   # API rate limiting
+│   │       └── request_retry.py  # Request retry logic
 │   │
 │   └── alerts/                   # Alert system
 │       ├── __init__.py
@@ -318,6 +400,7 @@ MarketPulseAI/
     ├── data_collection/          # Data collection Dockerfile
     ├── processing/               # Processing Dockerfile
     ├── prediction/               # Prediction Dockerfile
+    ├── news_collector/           # News collector Dockerfile (NEW)
     └── dashboard/                # Dashboard Dockerfile
 ```
 
