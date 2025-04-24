@@ -24,6 +24,13 @@ topics:
   market_data_validated: "market-data-validated"
   market_data_error: "market-data-error"
 
+  # News data topics
+  news_data_raw: "news-data-raw"                     # Raw news data from collectors
+  news_data_validated: "news-data-validated"         # Validated news data
+  news_data_invalid: "news-data-invalid"             # Invalid news data
+  news_data_error: "news-data-error"                 # News processing errors
+  news_data_enriched: "news-data-enriched"           # Enriched news data with entities
+
   # Combined sentiment topic
   sentiment_aggregated: "sentiment-aggregated"
 
@@ -36,6 +43,9 @@ consumer_groups:
 
   # Market data validation group
   market_data_validation: "market-data-validation-group"
+  
+  # News data validation group
+  news_validation: "news-validation-group"
 
 # Kafka configuration parameters
 config:
