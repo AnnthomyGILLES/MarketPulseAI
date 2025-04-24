@@ -9,7 +9,8 @@ api:
 collection:
   # How often to run collection (in minutes)
   frequency: 60
-  
+  max_requests_per_day: 10  # Maximum requests allowed per day
+
   # Max articles to fetch per query
   page_size: 100
   
@@ -17,7 +18,7 @@ collection:
   days_to_fetch: 7
   
   # Wait between API requests (in seconds)
-  request_cooldown: 60
+  request_cooldown: 10
   
   # Persistence directory for processed IDs
   persistence_dir: "data/news/persistence"

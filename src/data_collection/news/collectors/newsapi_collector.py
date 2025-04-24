@@ -123,12 +123,18 @@ class NewsAPICollector(BaseCollector):
         This method runs continuously until stopped, with configurable frequency.
         """
         self.running = True
+        requests_made = 0  # Counter for requests made
 
         frequency_minutes = self.config["collection"]["frequency"]
+        max_requests_per_day = self.config["collection"].get("max_requests_per_day", 100)  # Read from config
         logger.info(f"Starting news collection cycle every {frequency_minutes} minutes")
 
         try:
             while self.running:
+                if requests_made >= max_requests_per_day:
+                    logger.info("Reached the maximum number of requests for the day. Stopping collection.")
+                    break  # Stop if the limit is reached
+
                 start_time = time.time()
                 logger.info("Starting news collection cycle")
 
@@ -136,6 +142,7 @@ class NewsAPICollector(BaseCollector):
                 for query in self.config["filters"]["queries"]:
                     try:
                         articles = self._fetch_articles_for_query(query)
+                        requests_made += 1  # Increment the request counter
                         self._process_articles(articles)
                     except Exception as e:
                         logger.exception(f"Error processing query '{query}': {e}")
