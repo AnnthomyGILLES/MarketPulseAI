@@ -7,6 +7,7 @@ import os
 import signal
 import time
 from typing import Any
+from pathlib import Path
 
 from loguru import logger
 
@@ -129,7 +130,7 @@ class NewsValidationService:
 
         try:
             while self.running:
-                messages = self.consumer.consume(num_messages=10, timeout_ms=1000)
+                messages = self.consumer.consume()
 
                 if not messages:
                     continue
@@ -241,8 +242,37 @@ class NewsValidationService:
 
         if hasattr(self, "invalid_producer") and self.invalid_producer:
             self.invalid_producer.close()
-            
+
         if hasattr(self, "error_producer") and self.error_producer:
             self.error_producer.close()
-            
-        logger.info(f"{self.service_name} stopped") 
+
+        logger.info(f"{self.service_name} stopped")
+
+
+if __name__ == "__main__":
+    # Set up logger
+    logger.add(
+        "logs/validation_service_{time}.log",
+        rotation="500 MB",
+        retention="10 days",
+        level="INFO",
+    )
+
+    # Resolve paths for configuration files using Pathlib
+    base_path = (
+        Path(__file__).resolve().parents[4]
+    )  # Adjusting to get the base directory
+    config_path = (
+        base_path / "config/news_api_config.yaml"
+    )  # Update with your actual config file
+    kafka_config_path = (
+        base_path / "config/kafka/kafka_config.yaml"
+    )  # Optional, can be set to None if not needed
+
+    # Initialize the validation service
+    validation_service = NewsValidationService(config_path=str(config_path), kafka_config_path=str(kafka_config_path))
+    
+    try:
+        validation_service.run()
+    except KeyboardInterrupt:
+        logger.info("Validation service stopped by user") 
