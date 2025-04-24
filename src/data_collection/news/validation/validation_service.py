@@ -64,10 +64,7 @@ class NewsValidationService:
         """Initialize Kafka consumer and producers."""
         try:
             # Determine bootstrap servers based on environment
-            if os.getenv("CONTAINER_ENV") == "true":
-                bootstrap_servers = self.kafka_config["bootstrap_servers_container"]
-            else:
-                bootstrap_servers = self.kafka_config["bootstrap_servers"]
+            bootstrap_servers = self.kafka_config["bootstrap_servers"]
 
             # Get topics
             topics_config = self.kafka_config.get("topics", {})
@@ -138,7 +135,7 @@ class NewsValidationService:
                 for message in messages:
                     try:
                         # Parse the message
-                        if not message.value:
+                        if not message["value"]:
                             continue
 
                         processed_count += 1
@@ -150,19 +147,19 @@ class NewsValidationService:
 
                         # Extract the message value and key
                         try:
-                            data = message.value
+                            data = message["value"]
                             if isinstance(data, bytes):
                                 data = json.loads(data.decode("utf-8"))
                             elif isinstance(data, str):
                                 data = json.loads(data)
 
-                            key = message.key
+                            key = message["key"]
                             if isinstance(key, bytes):
                                 key = key.decode("utf-8")
                         except (json.JSONDecodeError, UnicodeDecodeError) as e:
                             logger.error(f"Failed to decode message: {e}")
                             self._send_error_message(
-                                message.value, f"Message decoding error: {e}"
+                                message["value"], f"Message decoding error: {e}"
                             )
                             error_count += 1
                             continue
@@ -197,7 +194,10 @@ class NewsValidationService:
                     except Exception as e:
                         logger.exception(f"Error processing message: {e}")
                         try:
-                            self._send_error_message(message.value, str(e))
+                            if isinstance(message, dict) and "value" in message:
+                                self._send_error_message(message["value"], str(e))
+                            else:
+                                self._send_error_message(message, str(e))
                         except Exception:
                             logger.exception("Failed to send error message")
                         error_count += 1
