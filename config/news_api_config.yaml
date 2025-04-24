@@ -1,0 +1,100 @@
+# NewsAPI Configuration for MarketPulseAI
+
+# API Settings
+api:
+  key: "${NEWSAPI_KEY}"  # Environment variable - DO NOT hardcode
+  base_url: "https://newsapi.org/v2"
+
+# Collection Settings
+collection:
+  # How often to run collection (in minutes)
+  frequency: 60
+  
+  # Max articles to fetch per query
+  page_size: 100
+  
+  # Days of news to fetch (1-30)
+  days_to_fetch: 7
+  
+  # Wait between API requests (in seconds)
+  request_cooldown: 60
+  
+  # Persistence directory for processed IDs
+  persistence_dir: "data/news/persistence"
+
+# Content Filters
+filters:
+  # Search queries to use
+  queries:
+    - "stock market"
+    - "financial news"
+    - "stock price"
+    - "market analysis"
+    - "investment"
+    - "earnings"
+    - "Wall Street"
+    - "NASDAQ"
+    - "NYSE"
+    - "S&P 500"
+    - "Dow Jones"
+  
+  # News sources to include (optional)
+  # If empty, all sources are included
+  sources:
+    - "bloomberg"
+    - "financial-times"
+    - "the-wall-street-journal"
+    - "business-insider"
+    - "cnbc"
+    - "reuters"
+    - "forbes"
+  
+  # News categories
+  categories:
+    - "business"
+    - "finance"
+  
+  # Languages to include
+  languages:
+    - "en"
+  
+  # Countries to include (optional)
+  countries:
+    - "us"
+    - "gb"
+
+# Validation Settings
+validation:
+  min_title_length: 10
+  min_content_length: 50
+  relevance_threshold: 0.3  # Min relevance score to accept (0-1)
+
+# Data Flow Settings
+kafka:
+  # Topic for valid news articles
+  news_topic: "news-articles"
+  
+  # Topic for validation errors
+  error_topic: "news-errors"
+  
+  # Topic for aggregated sentiment data
+  sentiment_topic: "news-sentiment"
+  
+  # Producer settings
+  producer:
+    acks: "all"
+    retries: 3
+    batch_size: 16384
+    linger_ms: 100
+    compression_type: "snappy"
+
+# Entity Extraction Settings
+entity_extraction:
+  # Path to stock symbols list
+  stock_symbols_path: "data/symbols/stock_symbols.txt"
+  
+  # Path to company names list
+  company_names_path: "data/symbols/company_names.txt"
+  
+  # Path to financial terms list
+  financial_terms_path: "data/symbols/financial_terms.txt" 
