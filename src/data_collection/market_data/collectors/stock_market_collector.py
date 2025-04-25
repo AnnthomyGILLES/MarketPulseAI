@@ -3,23 +3,38 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from polygon import RESTClient
+from loguru import logger
 
 from src.data_collection.base_collector import BaseCollector
 
 
 class StockMarketCollector(BaseCollector):
     def __init__(self, config_path: str = None):
+        # Initialize the BaseCollector with just the collector_name
+        super().__init__("market_data_collector")
+
+        # Handle config path
         if config_path is None:
             base_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
             config_path = str(base_dir / "config" / "kafka" / "kafka_config.yaml")
 
-        super().__init__(config_path, "market_data_collector")
+        self.config_path = config_path
+        # You'll need to load your config here if needed
+        self.config = self._load_config(config_path)
+
         self.symbols = [
             "AAPL",
         ]
         self.client = RESTClient(self._get_polygon_api_key())
         self.running = False
         self.collection_interval = 30  # seconds
+        self.logger = logger  # Use the loguru logger
+
+    def _load_config(self, config_path: str) -> dict:
+        """Load configuration from YAML file"""
+        import yaml
+        with open(config_path, 'r') as file:
+            return yaml.safe_load(file)
 
     def _get_polygon_api_key(self) -> str:
         """Get the Polygon API key from environment variables"""
@@ -27,16 +42,25 @@ class StockMarketCollector(BaseCollector):
 
         return os.environ.get("POLYGON_API_KEY", "demo")
 
+    def send_to_kafka(self, topic, data, key=None):
+        """
+        Send data to Kafka topic.
+        This is a placeholder method - you'll need to implement your actual Kafka code here.
+        """
+        # Implementation depends on your Kafka setup
+        self.logger.info(f"Sending data to Kafka topic: {topic}")
+        # Your Kafka producer code would go here
+
     def get_agg_bars(
-        self,
-        symbols=None,
-        multiplier: int = 1,
-        timespan: str = "day",
-        from_date: str = None,
-        to_date: str = None,
-        adjusted: bool = True,
-        sort: str = "asc",
-        limit: int = 120,
+            self,
+            symbols=None,
+            multiplier: int = 1,
+            timespan: str = "day",
+            from_date: str = None,
+            to_date: str = None,
+            adjusted: bool = True,
+            sort: str = "asc",
+            limit: int = 120,
     ) -> None:
         """
         Get aggregated bars (OHLC) data for given symbols and send directly to Kafka.
@@ -70,14 +94,14 @@ class StockMarketCollector(BaseCollector):
                 # Fetch and immediately stream the aggregated bars
                 bar_count = 0
                 for agg in self.client.list_aggs(
-                    symbol,
-                    multiplier,
-                    timespan,
-                    from_date,
-                    to_date,
-                    adjusted=adjusted,
-                    sort=sort,
-                    limit=limit,
+                        symbol,
+                        multiplier,
+                        timespan,
+                        from_date,
+                        to_date,
+                        adjusted=adjusted,
+                        sort=sort,
+                        limit=limit,
                 ):
                     # Convert polygon object to dictionary
                     agg_dict = {
