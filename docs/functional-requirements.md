@@ -7,9 +7,14 @@ Before choosing any technologies or designing any architecture, I started with t
 
 The first critical step was identifying who would actually use MarketPulseAI:
 
-- **Traders**: Primarily concerned with actionable signals and timing
-- **Market analysts**: Focused on understanding correlations between sentiment and price movements
-- **Data scientists**: Interested in the raw data and model performance metrics for their own research
+- **Technical traders**: Professionals using quantitative analysis for trading decisions
+- **Data scientists**: Researchers studying market patterns and sentiment correlations
+
+For each persona, I asked:
+- What would success look like for this stakeholder?
+- What information do they need?
+- What actions do they need to take?
+- What constraints or preferences might they have?
 
 Understanding these different personas helped shape both the functional requirements and the delivery mechanisms. Each user type needed different interfaces and latency expectations.
 
@@ -111,3 +116,10 @@ Several critical insights emerged during the requirements gathering phase:
 By spending time upfront defining clear requirements with end-user involvement, we avoided the common pitfall of premature technology selection and built a foundation that could evolve with changing needs and scale with growing data volumes.
 
 The requirements framework became our north star, guiding all subsequent architectural decisions and ensuring MarketPulseAI would deliver genuine value through the fusion of market data and social sentiment.
+
+
+## Conclusion
+
+The requirements gathering phase for MarketPulseAI established a solid foundation for system design and implementation. By methodically progressing from vision to concrete specifications, I created a blueprint that balanced ambition with technical feasibility.
+
+In my next post, I'll detail how these requirements directly influenced the architectural decisions that shaped the MarketPulseAI system.
