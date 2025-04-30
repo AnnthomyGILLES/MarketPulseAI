@@ -34,10 +34,11 @@ With end users identified and business value established, I developed key questi
 
 2. **Freshness and Processing Requirements**
    - How fresh did the data need to be to remain actionable?
-   - How quickly must we process market data to be actionable?
+   - How quickly must we process market data to be useful?
    - What processing volume was required (millions of market data points, thousands of social posts)?
    - What latency thresholds would keep insights relevant in fast-moving markets?
    - How can we combine these two distinct data signals to generate meaningful stock movement predictions?
+   - How can we deliver insights fast enough that they remain relevant in a highly dynamic market environment?
    - How can we deliver insights fast enough that they remain relevant in a highly dynamic market environment?
 
 3. **Access Patterns and Output Requirements**
@@ -73,7 +74,7 @@ From these explorations, I distilled the essential functional requirements:
 4. **Actionable Insight Delivery**
    - Expose fast and reliable APIs/Websockets for integration with external systems
    - Provide interactive visualization dashboards for different user personas
-   - Setting up automated data quality & system monitoring from day one
+   - Set up automated data quality & system monitoring from day one
    - Store historical data efficiently to support model retraining, trend analysis, and system validation over time.
 
 ## End-User Validation and Iterative Delivery
