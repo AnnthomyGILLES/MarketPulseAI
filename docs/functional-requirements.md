@@ -1,4 +1,7 @@
+I'll correct the mistakes in this post and rewrite it directly. I've carefully reviewed the content and will fix any issues I find.
+
 # Defining Requirements: The Foundation of MarketPulseAI
+
 In my years of architecting data systems, I've learned that successful projects aren't built on technology choices - they're built on a foundation of clearly defined requirements. Before writing a single line of code for MarketPulseAI, I dedicated significant time to understanding the problem space through a structured requirements gathering process.
 
 Before choosing any technologies or designing any architecture, I started with the most critical step: **defining the right questions**. Clear, thoughtful questions are the foundation of any successful system.
@@ -54,7 +57,6 @@ With end users identified and business value established, I developed key questi
    - What latency thresholds would keep insights relevant in fast-moving markets?
    - How can we combine these two distinct data signals to generate meaningful stock movement predictions?
    - How can we deliver insights fast enough that they remain relevant in a highly dynamic market environment?
-   - How can we deliver insights fast enough that they remain relevant in a highly dynamic market environment?
 
 3. **Access Patterns and Output Requirements**
    - How would different users interact with and benefit from these insights?
@@ -66,8 +68,8 @@ With end users identified and business value established, I developed key questi
    - What business-logic checks should be implemented for market data?
    - How should we handle anomalies in both data streams?
 
-
 ## Functional Requirements: The System's Core Capabilities
+
 Functional requirements describe what the system should do - the specific behaviors, features, and functionalities that the system must perform. They define the capabilities the system must provide to users and other systems.
 
 From these explorations, I distilled the essential functional requirements:
@@ -91,7 +93,7 @@ From these explorations, I distilled the essential functional requirements:
    - Expose APIs for integration with external systems
    - Deliver real-time updates to dashboards via WebSockets
    - Create interactive visualizations for market data and sentiment trends
-   - Store historical data to support model retraining, trend analysis, and system validation over time.
+   - Store historical data to support model retraining, trend analysis, and system validation over time
 
 ## Non-Functional Requirements
 
@@ -117,12 +119,13 @@ These requirements define how the system should perform its functions:
 - Alerting for anomalous system behavior
 
 #### Security
-- Let's skip that for now xD
-
+- I skip that for now. It is a side project.
 #### Reliability
 - I skip that too. I know i shouldn't but it's for pure pleasure and i want to focus on something else.
 
+
 ## 🧩 Core Entities - What Are the Core Things We Manage? 
+
 Before APIs, databases, or ML models — I thought: what are the main "objects" in this system?
 
 I mapped out the fundamental data structures our system would need to track:
@@ -133,7 +136,6 @@ I mapped out the fundamental data structures our system would need to track:
 - **TechnicalIndicator**: Calculated market indicators for different securities
 - **Prediction**: Integrated signal outputs with confidence scores
 - **SecurityMetadata**: Stock/asset information for reference
-
 
 ## End-User Validation and Iterative Delivery
 
@@ -169,7 +171,6 @@ Several critical insights emerged during the requirements gathering phase:
 By spending time upfront defining clear requirements with end-user involvement, we avoided the common pitfall of premature technology selection and built a foundation that could evolve with changing needs and scale with growing data volumes.
 
 The requirements framework became our north star, guiding all subsequent architectural decisions and ensuring MarketPulseAI would deliver genuine value through the fusion of market data and social sentiment.
-
 
 ## Conclusion
 
