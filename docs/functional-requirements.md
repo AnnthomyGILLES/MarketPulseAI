@@ -18,6 +18,16 @@ For each persona, I asked:
 
 Understanding these different personas helped shape both the functional requirements and the delivery mechanisms. Each user type needed different interfaces and latency expectations.
 
+### Use Case Mapping
+
+I defined core use cases by mapping typical user journeys:
+
+1. **Real-time market monitoring**: Tracking price movements with technical indicators
+2. **Sentiment trend analysis**: Observing how market sentiment evolves
+3. **Signal correlation detection**: Identifying leading indicators in either market data or sentiment
+4. **Historical pattern analysis**: Studying past correlations for predictive modeling
+5. **System performance monitoring**: Ensuring system health and data quality
+
 ## Business Impact and Value Proposition
 
 Before diving into technical details, I had to answer the most important question: **How would MarketPulseAI impact the business?** This meant clarifying:
@@ -56,31 +66,74 @@ With end users identified and business value established, I developed key questi
    - What business-logic checks should be implemented for market data?
    - How should we handle anomalies in both data streams?
 
+
 ## Functional Requirements: The System's Core Capabilities
+Functional requirements describe what the system should do - the specific behaviors, features, and functionalities that the system must perform. They define the capabilities the system must provide to users and other systems.
 
 From these explorations, I distilled the essential functional requirements:
 
 1. **Dual-Stream Data Processing**
-   - Ingest real-time market data (prices, volumes, order books) with sub-second latency
+   - Ingest real-time market data (prices, volumes, order books) from stock exchanges
    - Collect and filter relevant financial discussions from social platforms and news sources
-   - Process millions of market data points and thousands of social posts per minute
 
-2. **Comprehensive Data Validation**
-   - Implement rigorous validation for market data (completeness, continuity, range checks)
+2. **Data Validation**
+   - Implement rigorous validation for market data
    - Filter social content for relevance, credibility, and duplicate detection
    - Detect and handle anomalies in both data streams appropriately
 
-3. **Advanced Analytics Pipeline**
+3. **Analytics Pipeline**
    - Calculate technical indicators across multiple timeframes
-   - Extract sentiment with entity linking to specific stocks and sectors
-   - Combine technical and sentiment signals with adaptive weighting
-   - Generate short-term price movement forecasts with confidence intervals
+   - Produce sentiment analysis signals from social media content
+   - Combine technical and sentiment signals to create market predictions
+   - Quantify prediction confidence based on signal strength and historical accuracy
 
 4. **Actionable Insight Delivery**
-   - Expose fast and reliable APIs/Websockets for integration with external systems
-   - Provide interactive visualization dashboards for different user personas
-   - Set up automated data quality & system monitoring from day one
-   - Store historical data efficiently to support model retraining, trend analysis, and system validation over time.
+   - Expose APIs for integration with external systems
+   - Deliver real-time updates to dashboards via WebSockets
+   - Create interactive visualizations for market data and sentiment trends
+   - Store historical data to support model retraining, trend analysis, and system validation over time.
+
+## Non-Functional Requirements
+
+Non-functional requirements describe how the system should perform its functions - the quality attributes, constraints, and characteristics that affect the system's operation. They define the system's overall qualities rather than specific behaviors.
+
+These requirements define how the system should perform its functions:
+
+#### Performance
+- **Processing Latency**: End-to-end processing time under 5 seconds from data ingestion to prediction
+- **Throughput**: Capability to process millions of market data points and thousands of social posts per minute
+
+#### Scalability
+- Handle 10x normal data volume during market volatility events
+- Support addition of new data sources without architecture changes
+
+#### Data Quality
+- Validate all incoming market data against expected ranges and formats
+- Score social content for relevance before processing
+- Track prediction accuracy and model drift metrics
+
+#### Operability
+- Comprehensive monitoring of system health and performance
+- Alerting for anomalous system behavior
+
+#### Security
+- Let's skip that for now xD
+
+#### Reliability
+- I skip that too. I know i shouldn't but it's for pure pleasure and i want to focus on something else.
+
+## 🧩 Core Entities - What Are the Core Things We Manage? 
+Before APIs, databases, or ML models — I thought: what are the main "objects" in this system?
+
+I mapped out the fundamental data structures our system would need to track:
+
+- **MarketData**: Time-series price and volume information with associated metadata
+- **SocialContent**: Posts, tweets, news articles with market relevance
+- **SentimentAnalysis**: Processed sentiment scores linked to specific securities
+- **TechnicalIndicator**: Calculated market indicators for different securities
+- **Prediction**: Integrated signal outputs with confidence scores
+- **SecurityMetadata**: Stock/asset information for reference
+
 
 ## End-User Validation and Iterative Delivery
 
