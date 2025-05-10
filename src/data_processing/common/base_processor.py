@@ -104,10 +104,33 @@ class BaseStreamProcessor:
             spark_builder = spark_builder.config("spark.mongodb.output.uri", mongo_uri)
             spark_builder = spark_builder.config("spark.mongodb.input.uri", mongo_uri)
 
+        # Add Cassandra configurations if present
+        cassandra_config = self.config.get("cassandra", {})
+        if cassandra_config:
+            host = cassandra_config.get("connection_host")
+            port = cassandra_config.get("connection_port")
+            username = cassandra_config.get("auth_username")
+            password = cassandra_config.get("auth_password")
+            
+            # Add Cassandra related Spark configurations
+            spark_builder = spark_builder.config("spark.cassandra.connection.host", host)
+            spark_builder = spark_builder.config("spark.cassandra.connection.port", port)
+            
+            if username and password:
+                spark_builder = spark_builder.config("spark.cassandra.auth.username", username)
+                spark_builder = spark_builder.config("spark.cassandra.auth.password", password)
+                
+            # Additional Cassandra configs for better performance and reliability
+            spark_builder = spark_builder.config("spark.cassandra.connection.keep_alive_ms", "60000")
+            spark_builder = spark_builder.config("spark.cassandra.connection.timeout_ms", "10000")
+            spark_builder = spark_builder.config("spark.cassandra.output.consistency.level", "LOCAL_ONE")
+            spark_builder = spark_builder.config("spark.cassandra.input.consistency.level", "LOCAL_ONE")
+
         # Add required packages
         packages = [
             "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1",
-            "org.mongodb.spark:mongo-spark-connector_2.12:10.4.1"
+            "org.mongodb.spark:mongo-spark-connector_2.12:10.4.1",
+            "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1"
         ]
         spark_builder = spark_builder.config("spark.jars.packages", ",".join(packages))
 
@@ -251,6 +274,72 @@ class BaseStreamProcessor:
         
         # Returning the query object allows the caller to manage its lifecycle (e.g., awaitTermination)
         # If you prefer the original fire-and-forget style, remove the return statement.
+        return query
+
+    def write_to_cassandra(self, df: DataFrame, keyspace: str, table: str,
+                           checkpoint_location: str, output_mode: str = "append"):
+        """Write streaming DataFrame to Apache Cassandra.
+
+        Args:
+            df: DataFrame to write
+            keyspace: Cassandra keyspace name
+            table: Cassandra table name
+            checkpoint_location: Checkpoint directory path
+            output_mode: Spark Structured Streaming output mode (e.g., "append", "complete", "update")
+
+        Returns:
+            The streaming query object
+        """
+        logger.info(f"Writing data to Cassandra {keyspace}.{table}")
+
+        # Get Cassandra configuration from config
+        cassandra_config = self.config.get("cassandra", {})
+        host = cassandra_config.get("connection_host", "localhost")
+        port = cassandra_config.get("connection_port", "9042")
+        username = cassandra_config.get("auth_username", "")
+        password = cassandra_config.get("auth_password", "")
+
+        logger.info(f"Using Cassandra host: {host}, port: {port}, keyspace: {keyspace}, table: {table}")
+
+        # Writing using foreachBatch for more control
+        def write_batch_to_cassandra(batch_df, batch_id):
+            logger.debug(f"Writing batch {batch_id} to Cassandra {keyspace}.{table}")
+            
+            if batch_df.isEmpty():
+                logger.debug(f"Batch {batch_id} is empty, skipping write to Cassandra")
+                return
+            
+            # Configure Cassandra write options
+            write_options = {
+                "keyspace": keyspace,
+                "table": table,
+                "spark.cassandra.connection.host": host,
+                "spark.cassandra.connection.port": port,
+                "confirm.truncate": "false"
+            }
+            
+            # Add authentication if provided
+            if username and password:
+                write_options["spark.cassandra.auth.username"] = username
+                write_options["spark.cassandra.auth.password"] = password
+                
+            # Write to Cassandra
+            batch_df.write \
+                .format("org.apache.spark.sql.cassandra") \
+                .options(**write_options) \
+                .mode(output_mode) \
+                .save()
+
+        # Start the streaming query
+        query = (
+            df.writeStream
+            .foreachBatch(write_batch_to_cassandra)
+            .option("checkpointLocation", checkpoint_location)
+            .outputMode(output_mode)
+            .start()
+        )
+        
+        # Return the query object for management by the caller
         return query
 
     def run(self) -> None:

@@ -1,5 +1,4 @@
 # src/data_processing/stock/stock_processor.py
-from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
@@ -112,10 +111,14 @@ class StockDataProcessor(BaseStreamProcessor):
             cassandra_keyspace = self.config["cassandra"]["keyspace"]
             cassandra_table = self.config["cassandra"]["table"]
 
-            # Generate a unique checkpoint location
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            checkpoint_dir = Path(self.config["checkpoint_location_base_path"])
-            checkpoint_location = str(checkpoint_dir / f"stock_features_{timestamp}")
+            # Create a static checkpoint location for the stream to enable resumption
+            checkpoint_dir = Path(self.config.get("checkpoint_location_base_path", "/opt/bitnami/spark/checkpoints"))
+            checkpoint_location = str(checkpoint_dir / "stock_features")
+            
+            # Ensure checkpoint directory exists
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            
+            logger.info(f"Using checkpoint location: {checkpoint_location}")
 
             # Read data from Kafka
             kafka_stream = self.read_from_kafka(kafka_topic)
