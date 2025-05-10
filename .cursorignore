@@ -209,3 +209,4 @@ commitlint.config.js
 .eslintignore
 commit-gen.js
 *.log
+node_modules/
