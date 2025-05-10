@@ -1,11 +1,16 @@
 import time
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from dotenv import load_dotenv
 from polygon import RESTClient
 from loguru import logger
 
 from src.data_collection.base_collector import BaseCollector
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class StockMarketCollector(BaseCollector):
@@ -37,9 +42,10 @@ class StockMarketCollector(BaseCollector):
             return yaml.safe_load(file)
 
     def _get_polygon_api_key(self) -> str:
-        """Get the Polygon API key from environment variables"""
-        import os
+        """Get the Polygon API key from environment variables
 
+        The key should be defined in your .env file as POLYGON_API_KEY
+        """
         return os.environ.get("POLYGON_API_KEY", "demo")
 
     def send_to_kafka(self, topic, data, key=None):
