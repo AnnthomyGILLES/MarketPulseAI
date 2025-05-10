@@ -1,6 +1,6 @@
 services:
   redpanda:
-    image: redpandadata/redpanda:latest
+    image: redpandadata/redpanda:v23.3.5
     command:
       - redpanda start
       - --smp 2
@@ -24,7 +24,7 @@ services:
           memory: 3G
 
   redpanda-console:
-    image: docker.redpanda.com/redpandadata/console:latest
+    image: docker.redpanda.com/redpandadata/console:v2.3.1
     ports:
       - "8081:8080"
     environment:
@@ -35,15 +35,15 @@ services:
       - kafka-network
 
   mongodb:
-    image: mongo:latest
+    image: mongo:6.0
     ports:
       - "27017:27017"
     volumes:
       - mongodb-data:/data/db
       - ./config/mongodb:/docker-entrypoint-initdb.d
     environment:
-      - MONGO_INITDB_ROOT_USERNAME=mongodb_user
-      - MONGO_INITDB_ROOT_PASSWORD=mongodb_password
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_USERNAME:-mongodb_user}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD:-mongodb_password}
       - MONGO_INITDB_DATABASE=social_media
     networks:
       - kafka-network
@@ -59,8 +59,34 @@ services:
         reservations:
           memory: 1G
 
+  cassandra:
+    image: cassandra:4.1
+    ports:
+      - "9042:9042"
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+    environment:
+      - CASSANDRA_CLUSTER_NAME=MarketPulse
+      - CASSANDRA_ENDPOINT_SNITCH=SimpleSnitch
+      - CASSANDRA_DC=datacenter1
+      - CASSANDRA_USER=${CASSANDRA_USER:-cassandra}
+      - CASSANDRA_PASSWORD=${CASSANDRA_PASSWORD:-cassandra}
+    networks:
+      - kafka-network
+    healthcheck:
+      test: ["CMD", "cqlsh", "-u", "cassandra", "-p", "cassandra", "-e", "describe keyspaces"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
   redis:
-    image: redis:latest
+    image: redis:7.2
     ports:
       - "6379:6379"
     volumes:
@@ -81,7 +107,9 @@ services:
           memory: 512M
 
   spark:
-    image: bitnami/spark:latest
+    build:
+      context: ./
+      dockerfile: ./docker/spark/Dockerfile
     ports:
       - "8090:8080"  # Spark UI
       - "7077:7077"  # Spark master port
@@ -93,37 +121,26 @@ services:
       - ./logs/spark:/opt/bitnami/spark/logs
       - ./models:/opt/bitnami/spark/models
       - spark-volume:/bitnami
-      - spark-cache:/root/.cache
     environment:
       - SPARK_MODE=master
       - KAFKA_BOOTSTRAP_SERVERS=redpanda:29092
       - MONGODB_HOST=mongodb
       - MONGODB_PORT=27017
+      - CASSANDRA_HOST=cassandra
+      - CASSANDRA_PORT=9042
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - HOME=/root
-      - HF_HOME=/root/.cache
+      - HF_HOME=/opt/bitnami/spark/models/cache
     networks:
       - kafka-network
     depends_on:
       - redpanda
       - mongodb
       - redis
+      - cassandra
     user: root  # Ensure we're running as root
     command: >
-      bash -c "
-        echo 'Setting up development environment...' &&
-        mkdir -p /root/.local && chmod -R 777 /root/.local &&
-        pip install --no-cache-dir --upgrade pip &&
-        pip install --no-cache-dir \"yfinance>=0.2.54,<1.0.0\" \"pydantic>=2.10.6,<3.0.0\" \"tweepy[async]>=4.15.0,<5.0.0\" \"kafka-python>=2.0.5,<3.0.0\" \"loguru>=0.7.3,<1.0.0\" \"pyspark>=3.5.5,<4.0.0\" \"ruff>=0.9.9,<1.0.0\" \"transformers>=4.50.0,<5.0.0\" \"nltk>=3.9.1,<4.0.0\" \"emoji>=2.14.1,<3.0.0\" \"cassandra-driver>=3.29.2,<4.0.0\" \"polygon-api-client>=1.14.4,<2.0.0\" \"praw>=7.8.1,<8.0.0\" \"python-dotenv>=1.1.0,<2.0.0\" \"vadersentiment>=3.3.2\" \"typer>=0.15.2\" \"pendulum>=3.0.0\" \"confluent-kafka>=2.9.0\" \"redis>=5.0.0\" pymongo pandas matplotlib torch numpy scipy &&
-        echo 'Installing additional sentiment analysis dependencies...' &&
-        mkdir -p /opt/bitnami/spark/models &&
-        python -c \"from transformers import AutoModelForSequenceClassification, AutoTokenizer; AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert'); AutoTokenizer.from_pretrained('ProsusAI/finbert')\" &&
-        echo 'Spark development environment ready!' &&
-        echo 'Run your Reddit Sentiment script manually with:' &&
-        echo '/opt/bitnami/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.mongodb.spark:mongo-spark-connector_2.12:10.4.1 /opt/bitnami/spark/src/data_processing/main.py process-reddit' &&
-        tail -f /dev/null
-      "
+      bash -c "echo 'Spark is ready!' && tail -f /dev/null"
     deploy:
       resources:
         limits:
@@ -133,7 +150,7 @@ services:
 
 
   redisinsight:
-    image: redislabs/redisinsight:latest
+    image: redislabs/redisinsight:1.14.0
     ports:
       - "5540:5540"
     networks:
@@ -149,6 +166,7 @@ volumes:
   redis-data:
   grafana-data:
   spark-cache:
+  cassandra-data:
 
 networks:
   kafka-network:
