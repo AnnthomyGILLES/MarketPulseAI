@@ -5,7 +5,6 @@ import traceback
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
-from confluent_kafka import KafkaException
 from loguru import logger
 
 from src.common.messaging.kafka_consumer import KafkaConsumerWrapper
@@ -76,9 +75,6 @@ class BaseValidationService(abc.ABC):
                 raise KeyError("Missing 'consumer_groups' key in config.")
             if "bootstrap_servers" not in self.config:
                 raise KeyError("Missing 'bootstrap_servers' key in config.")
-            # No longer expect a top-level 'kafka' key, self.config holds the direct YAML structure
-            # self.kafka_config = self.config["kafka"] # Removed this line
-
         except (FileNotFoundError, KeyError, ValueError) as e:
             logger.exception(
                 f"[{self.service_name}] Failed to load or parse required keys from Kafka configuration {self.config_path}: {e}"
@@ -141,12 +137,10 @@ class BaseValidationService(abc.ABC):
 
     def _setup_kafka_clients(self):
         """Initializes Kafka consumers and producers based on config."""
-        self.consumer: Optional[KafkaConsumerWrapper] = (
-            None  # Assuming one consumer per service instance for now
-        )
-        self.valid_producer: Optional[KafkaProducerWrapper] = None
-        self.invalid_producer: Optional[KafkaProducerWrapper] = None
-        self.error_producer: Optional[KafkaProducerWrapper] = None
+        self.consumer = None
+        self.valid_producer = None
+        self.invalid_producer = None
+        self.error_producer = None
 
         try:
             # Access config keys directly from self.config
@@ -160,31 +154,18 @@ class BaseValidationService(abc.ABC):
 
             # Get consumer defaults from the 'consumer' section or provide empty dict
             consumer_defaults = self.config.get("consumer", {})
-            consumer_conf = {
-                "bootstrap.servers": bootstrap_servers,
-                "group.id": group_id,
-                # Use defaults from the 'consumer' section in the config file
-                "auto.offset.reset": consumer_defaults.get(
-                    "auto.offset.reset", "earliest"
-                ),
-                "enable.auto.commit": consumer_defaults.get("enable.auto.commit", True),
-                "auto.commit.interval.ms": consumer_defaults.get(
-                    "auto.commit.interval.ms", 5000
-                ),
-                "error_cb": self._kafka_error_callback,
-                # Add any other default or specific consumer configs here
-            }
-            # Allow overriding defaults from config if needed (e.g., a service-specific section)
-            consumer_conf.update(
-                self.config.get(f"{self.service_name.lower()}_consumer_config", {})
-            )
-
+            
             logger.info(
                 f"[{self.service_name}] Initializing Kafka consumer for topics: {input_topics}, group: {group_id}"
             )
             self.consumer = KafkaConsumerWrapper(
                 topics=input_topics,
-                config=consumer_conf,
+                bootstrap_servers=bootstrap_servers,
+                group_id=group_id,
+                auto_offset_reset=consumer_defaults.get("auto_offset_reset", "earliest"),
+                enable_auto_commit=consumer_defaults.get("enable_auto_commit", True),
+                max_poll_interval_ms=consumer_defaults.get("max_poll_interval_ms", 300000),
+                session_timeout_ms=consumer_defaults.get("session_timeout_ms", 10000),
                 consumer_timeout_ms=1000,  # For non-blocking consume loop
             )
             logger.info(f"[{self.service_name}] Consumer initialized.")
@@ -192,55 +173,45 @@ class BaseValidationService(abc.ABC):
             # --- Producer Setup ---
             # Get producer defaults from the 'producer' section or provide empty dict
             producer_defaults = self.config.get("producer", {})
-            base_producer_conf = {
-                "bootstrap.servers": bootstrap_servers,
-                # Use defaults from the 'producer' section in the config file
-                "acks": producer_defaults.get("acks", "all"),
-                "retries": producer_defaults.get("retries", 3),
-                "error_cb": self._kafka_error_callback,
-                # Add other producer defaults like batch.size, linger.ms etc. if desired
-                "batch.size": producer_defaults.get("batch.size", 16384),
-                "linger.ms": producer_defaults.get("linger.ms", 5),
-            }
 
             # Valid Producer
             self.valid_topic = topics_config[self.valid_topic_config_key]
-            valid_producer_conf = base_producer_conf.copy()
-            # Allow overriding defaults from config if needed (e.g., a service-specific section)
-            valid_producer_conf.update(
-                self.config.get(
-                    f"{self.service_name.lower()}_valid_producer_config", {}
-                )
+            self.valid_producer = KafkaProducerWrapper(
+                bootstrap_servers=bootstrap_servers,
+                client_id=f"{self.service_name.lower()}-valid-producer",
+                acks=producer_defaults.get("acks", "all"),
+                retries=producer_defaults.get("retries", 3),
+                linger_ms=producer_defaults.get("linger_ms", 5),
+                batch_size=producer_defaults.get("batch_size", 16384),
             )
-            self.valid_producer = KafkaProducerWrapper(config=valid_producer_conf)
             logger.info(
                 f"[{self.service_name}] Initialized 'valid' producer for topic: {self.valid_topic}"
             )
 
             # Invalid Producer
             self.invalid_topic = topics_config[self.invalid_topic_config_key]
-            invalid_producer_conf = base_producer_conf.copy()
-            # Allow overriding defaults from config if needed (e.g., a service-specific section)
-            invalid_producer_conf.update(
-                self.config.get(
-                    f"{self.service_name.lower()}_invalid_producer_config", {}
-                )
+            self.invalid_producer = KafkaProducerWrapper(
+                bootstrap_servers=bootstrap_servers,
+                client_id=f"{self.service_name.lower()}-invalid-producer",
+                acks=producer_defaults.get("acks", "all"),
+                retries=producer_defaults.get("retries", 3),
+                linger_ms=producer_defaults.get("linger_ms", 5),
+                batch_size=producer_defaults.get("batch_size", 16384),
             )
-            self.invalid_producer = KafkaProducerWrapper(config=invalid_producer_conf)
             logger.info(
                 f"[{self.service_name}] Initialized 'invalid' producer for topic: {self.invalid_topic}"
             )
 
             # Error Producer
             self.error_topic = topics_config[self.error_topic_config_key]
-            error_producer_conf = base_producer_conf.copy()
-            # Allow overriding defaults from config if needed (e.g., a service-specific section)
-            error_producer_conf.update(
-                self.config.get(
-                    f"{self.service_name.lower()}_error_producer_config", {}
-                )
+            self.error_producer = KafkaProducerWrapper(
+                bootstrap_servers=bootstrap_servers,
+                client_id=f"{self.service_name.lower()}-error-producer",
+                acks=producer_defaults.get("acks", "all"),
+                retries=producer_defaults.get("retries", 3),
+                linger_ms=producer_defaults.get("linger_ms", 5),
+                batch_size=producer_defaults.get("batch_size", 16384),
             )
-            self.error_producer = KafkaProducerWrapper(config=error_producer_conf)
             logger.info(
                 f"[{self.service_name}] Initialized 'error' producer for topic: {self.error_topic}"
             )
@@ -255,18 +226,6 @@ class BaseValidationService(abc.ABC):
                 f"[{self.service_name}] Failed to initialize Kafka clients: {e}"
             )
             raise
-
-    def _kafka_error_callback(self, err: KafkaException):
-        """Generic callback for Kafka client errors."""
-        log_prefix = f"[{self.service_name}] Kafka Error:"
-        if err.code() == KafkaException._PARTITION_EOF:
-            # Typically informational, can be logged at DEBUG or INFO
-            logger.info(f"{log_prefix} Reached end of partition: {err}")
-        elif err.fatal():
-            logger.error(f"{log_prefix} FATAL Error: {err}. Stopping service.")
-            self.stop()  # Trigger shutdown on fatal errors
-        else:
-            logger.warning(f"{log_prefix} Non-fatal Error: {err}")
 
     def _update_and_report_stats(
         self, is_valid: Optional[bool] = None, is_error: bool = False
@@ -501,9 +460,6 @@ class BaseValidationService(abc.ABC):
 
                         if msg is not None:
                             if "error" in msg and msg["error"] is not None:
-                                # Let the error callback handle logging/shutdown logic
-                                # self._kafka_error_callback(msg['error']) # Callback should already be configured
-                                # Log context if available
                                 logger.error(
                                     f"{log_prefix} Kafka consume error encountered: {msg['error']}"
                                 )
@@ -525,7 +481,6 @@ class BaseValidationService(abc.ABC):
                     logger.debug(
                         f"{log_prefix} Consumer generator finished cycle or timed out."
                     )
-                # KafkaException should ideally be caught by the error_cb
                 except Exception as e:
                     logger.exception(
                         f"{log_prefix} Unexpected error in consumer loop: {e}"
@@ -588,8 +543,8 @@ class BaseValidationService(abc.ABC):
                 logger.info(f"{log_prefix} Flushing and closing '{name}' producer...")
                 try:
                     producer.flush(timeout=10)
-                    # producer.close() # If explicit close is available/needed
-                    logger.info(f"{log_prefix} '{name}' producer flushed.")
+                    producer.close()
+                    logger.info(f"{log_prefix} '{name}' producer closed.")
                 except Exception as e:
                     logger.exception(
                         f"{log_prefix} Error flushing/closing '{name}' producer: {e}"

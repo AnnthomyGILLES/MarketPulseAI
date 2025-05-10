@@ -8,6 +8,8 @@ from polygon import RESTClient
 from loguru import logger
 
 from src.data_collection.base_collector import BaseCollector
+from src.common.messaging.kafka_producer import KafkaProducerWrapper
+from src.utils.config import load_config
 
 # Load environment variables from .env file
 load_dotenv()
@@ -24,22 +26,24 @@ class StockMarketCollector(BaseCollector):
             config_path = str(base_dir / "config" / "kafka" / "kafka_config.yaml")
 
         self.config_path = config_path
-        # You'll need to load your config here if needed
+        # Load configuration
         self.config = self._load_config(config_path)
 
         self.symbols = [
             "AAPL",
         ]
         self.client = RESTClient(self._get_polygon_api_key())
+        
+        # Initialize Kafka producer
+        self.kafka_producer = self._initialize_kafka_producer()
+        
         self.running = False
         self.collection_interval = 30  # seconds
         self.logger = logger  # Use the loguru logger
 
     def _load_config(self, config_path: str) -> dict:
         """Load configuration from YAML file"""
-        import yaml
-        with open(config_path, 'r') as file:
-            return yaml.safe_load(file)
+        return load_config(config_path)
 
     def _get_polygon_api_key(self) -> str:
         """Get the Polygon API key from environment variables
@@ -47,15 +51,59 @@ class StockMarketCollector(BaseCollector):
         The key should be defined in your .env file as POLYGON_API_KEY
         """
         return os.environ.get("POLYGON_API_KEY", "demo")
+    
+    def _initialize_kafka_producer(self) -> KafkaProducerWrapper:
+        """Initialize the Kafka producer for sending market data"""
+        try:
+            bootstrap_servers = self.config["bootstrap_servers"]
+            client_id = f"stock-market-collector-{os.getpid()}"
+            
+            # Get producer settings from config
+            producer_settings = self.config.get("producer", {})
+            acks = producer_settings.get("acks", "all")
+            retries = producer_settings.get("retries", 3)
+            
+            producer = KafkaProducerWrapper(
+                bootstrap_servers=bootstrap_servers,
+                client_id=client_id,
+                acks=acks,
+                retries=retries,
+                linger_ms=producer_settings.get("linger_ms", 10),
+                batch_size=producer_settings.get("batch_size", 16384),
+            )
+            
+            self.logger.info(f"Initialized Kafka producer with bootstrap servers: {bootstrap_servers}")
+            return producer
+        except Exception as e:
+            self.logger.exception(f"Failed to initialize Kafka producer: {e}")
+            return None
 
     def send_to_kafka(self, topic, data, key=None):
         """
-        Send data to Kafka topic.
-        This is a placeholder method - you'll need to implement your actual Kafka code here.
+        Send data to Kafka topic using the KafkaProducerWrapper.
+        
+        Args:
+            topic: The Kafka topic to send to
+            data: The data to send (dictionary)
+            key: Optional message key
+        
+        Returns:
+            bool: True if message was accepted by producer buffer, False otherwise
         """
-        # Implementation depends on your Kafka setup
-        self.logger.info(f"Sending data to Kafka topic: {topic}")
-        # Your Kafka producer code would go here
+        if not self.kafka_producer:
+            self.logger.error("Kafka producer not available, cannot send data")
+            return False
+            
+        try:
+            success = self.kafka_producer.send_message(topic=topic, value=data, key=key)
+            if success:
+                self.logger.debug(f"Successfully queued message to topic {topic}")
+            else:
+                self.logger.error(f"Failed to queue message to topic {topic}")
+            return success
+        except Exception as e:
+            self.logger.exception(f"Error sending data to Kafka: {e}")
+            return False
 
     def get_agg_bars(
             self,
@@ -95,6 +143,9 @@ class StockMarketCollector(BaseCollector):
             f"Fetching and streaming {timespan} bars for {len(symbols)} symbols from {from_date} to {to_date}"
         )
 
+        market_data_topic = self.config["topics"]["market_data_raw"]
+        total_bars_sent = 0
+        
         for symbol in symbols:
             try:
                 # Fetch and immediately stream the aggregated bars
@@ -123,22 +174,27 @@ class StockMarketCollector(BaseCollector):
                         "collection_timestamp": datetime.now().isoformat(),
                     }
 
-                    # Send each bar directly to Kafka without storing
-                    self.send_to_kafka(
-                        self.config["kafka"]["topics"]["market_data_raw"],
-                        agg_dict,
+                    # Send each bar directly to Kafka
+                    success = self.send_to_kafka(
+                        topic=market_data_topic,
+                        data=agg_dict,
                         key=f"{symbol}_{agg.timestamp}",
                     )
-                    bar_count += 1
+                    
+                    if success:
+                        bar_count += 1
 
                 self.logger.info(
-                    f"Streamed {bar_count} {timespan} bars for {symbol} to Kafka"
+                    f"Streamed {bar_count} {timespan} bars for {symbol} to Kafka topic {market_data_topic}"
                 )
+                total_bars_sent += bar_count
 
             except Exception as e:
                 self.logger.error(
                     f"Failed to stream aggregated bars for {symbol}: {str(e)}"
                 )
+                
+        return total_bars_sent
 
     def collect(self) -> None:
         """
@@ -155,7 +211,7 @@ class StockMarketCollector(BaseCollector):
         try:
             # For now, we're collecting historical aggregated data for all symbols at once
             # In production, this will be replaced with websocket Aggregates (Per Minute)
-            self.get_agg_bars(
+            total_bars = self.get_agg_bars(
                 symbols=self.symbols,
                 multiplier=1,
                 timespan="minute",
@@ -166,7 +222,7 @@ class StockMarketCollector(BaseCollector):
                 limit=50000,
             )
 
-            self.logger.info("Completed initial data collection for all symbols")
+            self.logger.info(f"Completed initial data collection. Total bars sent: {total_bars}")
 
             # Future implementation will use websocket for real-time updates
             # Placeholder for now - just wait until stopped
@@ -186,6 +242,17 @@ class StockMarketCollector(BaseCollector):
         self.running = False
         self.logger.info("Stopping market data collection")
         self.cleanup()
+        
+    def cleanup(self) -> None:
+        """Close resources when stopping the collector"""
+        super().cleanup()
+        if self.kafka_producer:
+            try:
+                self.kafka_producer.flush(timeout=10)
+                self.kafka_producer.close()
+                self.logger.info("Kafka producer closed successfully")
+            except Exception as e:
+                self.logger.error(f"Error closing Kafka producer: {e}")
 
 
 if __name__ == "__main__":
