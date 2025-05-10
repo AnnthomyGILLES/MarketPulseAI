@@ -19,6 +19,7 @@ class StockMarketCollector(BaseCollector):
     def __init__(self, config_path: str = None):
         # Initialize the BaseCollector with just the collector_name
         super().__init__("market_data_collector")
+        self.logger = logger
 
         # Handle config path
         if config_path is None:
@@ -33,13 +34,12 @@ class StockMarketCollector(BaseCollector):
             "AAPL",
         ]
         self.client = RESTClient(self._get_polygon_api_key())
-        
+
         # Initialize Kafka producer
         self.kafka_producer = self._initialize_kafka_producer()
-        
+
         self.running = False
         self.collection_interval = 30  # seconds
-        self.logger = logger  # Use the loguru logger
 
     def _load_config(self, config_path: str) -> dict:
         """Load configuration from YAML file"""
@@ -51,18 +51,18 @@ class StockMarketCollector(BaseCollector):
         The key should be defined in your .env file as POLYGON_API_KEY
         """
         return os.environ.get("POLYGON_API_KEY", "demo")
-    
+
     def _initialize_kafka_producer(self) -> KafkaProducerWrapper:
         """Initialize the Kafka producer for sending market data"""
         try:
             bootstrap_servers = self.config["bootstrap_servers"]
             client_id = f"stock-market-collector-{os.getpid()}"
-            
+
             # Get producer settings from config
             producer_settings = self.config.get("producer", {})
             acks = producer_settings.get("acks", "all")
             retries = producer_settings.get("retries", 3)
-            
+
             producer = KafkaProducerWrapper(
                 bootstrap_servers=bootstrap_servers,
                 client_id=client_id,
@@ -71,8 +71,10 @@ class StockMarketCollector(BaseCollector):
                 linger_ms=producer_settings.get("linger_ms", 10),
                 batch_size=producer_settings.get("batch_size", 16384),
             )
-            
-            self.logger.info(f"Initialized Kafka producer with bootstrap servers: {bootstrap_servers}")
+
+            self.logger.info(
+                f"Initialized Kafka producer with bootstrap servers: {bootstrap_servers}"
+            )
             return producer
         except Exception as e:
             self.logger.exception(f"Failed to initialize Kafka producer: {e}")
@@ -81,19 +83,19 @@ class StockMarketCollector(BaseCollector):
     def send_to_kafka(self, topic, data, key=None):
         """
         Send data to Kafka topic using the KafkaProducerWrapper.
-        
+
         Args:
             topic: The Kafka topic to send to
             data: The data to send (dictionary)
             key: Optional message key
-        
+
         Returns:
             bool: True if message was accepted by producer buffer, False otherwise
         """
         if not self.kafka_producer:
             self.logger.error("Kafka producer not available, cannot send data")
             return False
-            
+
         try:
             success = self.kafka_producer.send_message(topic=topic, value=data, key=key)
             if success:
@@ -106,15 +108,15 @@ class StockMarketCollector(BaseCollector):
             return False
 
     def get_agg_bars(
-            self,
-            symbols=None,
-            multiplier: int = 1,
-            timespan: str = "day",
-            from_date: str = None,
-            to_date: str = None,
-            adjusted: bool = True,
-            sort: str = "asc",
-            limit: int = 120,
+        self,
+        symbols=None,
+        multiplier: int = 1,
+        timespan: str = "day",
+        from_date: str = None,
+        to_date: str = None,
+        adjusted: bool = True,
+        sort: str = "asc",
+        limit: int = 120,
     ) -> None:
         """
         Get aggregated bars (OHLC) data for given symbols and send directly to Kafka.
@@ -145,20 +147,20 @@ class StockMarketCollector(BaseCollector):
 
         market_data_topic = self.config["topics"]["market_data_raw"]
         total_bars_sent = 0
-        
+
         for symbol in symbols:
             try:
                 # Fetch and immediately stream the aggregated bars
                 bar_count = 0
                 for agg in self.client.list_aggs(
-                        symbol,
-                        multiplier,
-                        timespan,
-                        from_date,
-                        to_date,
-                        adjusted=adjusted,
-                        sort=sort,
-                        limit=limit,
+                    symbol,
+                    multiplier,
+                    timespan,
+                    from_date,
+                    to_date,
+                    adjusted=adjusted,
+                    sort=sort,
+                    limit=limit,
                 ):
                     # Convert polygon object to dictionary
                     agg_dict = {
@@ -180,7 +182,7 @@ class StockMarketCollector(BaseCollector):
                         data=agg_dict,
                         key=f"{symbol}_{agg.timestamp}",
                     )
-                    
+
                     if success:
                         bar_count += 1
 
@@ -193,7 +195,7 @@ class StockMarketCollector(BaseCollector):
                 self.logger.error(
                     f"Failed to stream aggregated bars for {symbol}: {str(e)}"
                 )
-                
+
         return total_bars_sent
 
     def collect(self) -> None:
@@ -222,7 +224,9 @@ class StockMarketCollector(BaseCollector):
                 limit=50000,
             )
 
-            self.logger.info(f"Completed initial data collection. Total bars sent: {total_bars}")
+            self.logger.info(
+                f"Completed initial data collection. Total bars sent: {total_bars}"
+            )
 
             # Future implementation will use websocket for real-time updates
             # Placeholder for now - just wait until stopped
@@ -242,7 +246,7 @@ class StockMarketCollector(BaseCollector):
         self.running = False
         self.logger.info("Stopping market data collection")
         self.cleanup()
-        
+
     def cleanup(self) -> None:
         """Close resources when stopping the collector"""
         super().cleanup()
