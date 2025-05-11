@@ -65,17 +65,17 @@ services:
       - "9042:9042"
     volumes:
       - cassandra-data:/var/lib/cassandra
+      - ./config/cassandra/cassandra.yaml:/etc/cassandra/cassandra.yaml
     environment:
       - CASSANDRA_CLUSTER_NAME=market_data_cluster
       - CASSANDRA_ENDPOINT_SNITCH=SimpleSnitch
       - CASSANDRA_DC=datacenter1
       - MAX_HEAP_SIZE=2G
       - HEAP_NEWSIZE=512M
-      - CASSANDRA_SEEDS=cassandra
     networks:
       - kafka-network
     healthcheck:
-      test: ["CMD", "cqlsh", "-u", "cassandra", "-p", "cassandra", "-e", "describe keyspaces"]
+      test: [ "CMD", "cqlsh", "-e", "describe keyspaces" ]
       interval: 30s
       timeout: 10s
       retries: 10
@@ -94,12 +94,12 @@ services:
     command: >
       bash -c "
         echo 'Waiting for Cassandra to start...' &&
-        until cqlsh cassandra -u cassandra -p cassandra -e 'describe keyspaces'; do
+        until cqlsh cassandra -e 'describe keyspaces'; do
           echo 'Cassandra not ready yet - retrying...';
           sleep 10;
         done &&
         echo 'Initializing Cassandra schema...' &&
-        cqlsh cassandra -u cassandra -p cassandra -f /init/schema.cql &&
+        cqlsh cassandra -f /init/schema.cql &&
         echo 'Schema initialization complete!'
       "
     networks:

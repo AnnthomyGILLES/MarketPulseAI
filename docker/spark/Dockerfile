@@ -20,9 +20,9 @@ RUN mkdir -p /root/.local && chmod -R 777 /root/.local && \
     mkdir -p /opt/bitnami/spark/logs && \
     chmod -R 777 /opt/bitnami/spark/models
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Install uv and use it to install Python dependencies
+RUN curl -sSf https://astral.sh/uv/install.sh | sh && \
+    uv pip install -r requirements.txt
 
 # Pre-download and cache FinBERT model
 RUN python -c "from transformers import AutoModelForSequenceClassification, AutoTokenizer; AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert'); AutoTokenizer.from_pretrained('ProsusAI/finbert')"
