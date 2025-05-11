@@ -1,0 +1,55 @@
+# Name of the Cassandra cluster
+cluster_name: 'market_data_cluster'
+
+# Number of tokens assigned to each node for data distribution
+num_tokens: 256
+
+# Directory where Cassandra stores its data files
+data_file_directories:
+  - /var/lib/cassandra/data
+
+# Directory where Cassandra writes its commit logs for durability
+commitlog_directory: /var/lib/cassandra/commitlog
+
+# Directory for storing saved caches to improve read performance
+saved_caches_directory: /var/lib/cassandra/saved_caches
+
+# Network settings
+# IP address that Cassandra listens on for incoming connections from other nodes
+listen_address: localhost
+
+# IP address that clients use to connect to Cassandra
+rpc_address: localhost
+
+# IP address that Cassandra uses to communicate with other nodes in the cluster
+broadcast_address: localhost
+
+# IP address that clients use to connect to this node
+broadcast_rpc_address: localhost
+
+# Port used for inter-node communication (data transfer)
+storage_port: 7000
+
+# Port used for client connections to the Cassandra node
+rpc_port: 9042
+
+# Enable or disable the use of materialized views in Cassandra
+enable_materialized_views: true
+
+# Snitch settings
+# Defines the snitch used to determine the topology of the cluster
+endpoint_snitch: SimpleSnitch
+
+# Memory settings
+# Maximum heap size for the JVM running Cassandra
+max_heap_size: 2G
+
+# Initial size of the young generation heap
+heap_newsize: 512M
+
+# Other settings
+# Automatically take snapshots of data before major operations
+auto_snapshot: true
+
+# Enable or disable incremental backups
+incremental_backups: false
