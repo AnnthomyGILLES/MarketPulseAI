@@ -71,12 +71,12 @@ services:
       - CASSANDRA_DC=datacenter1
       - MAX_HEAP_SIZE=2G
       - HEAP_NEWSIZE=512M
-      - JVM_OPTS=-Xms1G -Xmx2G -Dcassandra.jmx.local.port=7199
+      - CASSANDRA_SEEDS=cassandra
     networks:
       - kafka-network
     healthcheck:
-      test: [ "CMD", "cqlsh", "-e", "describe keyspaces" ]
-      interval: 15s
+      test: ["CMD", "cqlsh", "-u", "cassandra", "-p", "cassandra", "-e", "describe keyspaces"]
+      interval: 30s
       timeout: 10s
       retries: 10
     restart: unless-stopped
@@ -90,16 +90,16 @@ services:
   cassandra-init:
     image: cassandra:4.1
     volumes:
-      - ./config/cassandra:/config/cassandra
+      - ./config/cassandra:/init
     command: >
       bash -c "
         echo 'Waiting for Cassandra to start...' &&
-        until cqlsh cassandra -e 'describe keyspaces'; do
+        until cqlsh cassandra -u cassandra -p cassandra -e 'describe keyspaces'; do
           echo 'Cassandra not ready yet - retrying...';
-          sleep 5;
+          sleep 10;
         done &&
-        echo 'Initializing Cassandra schema from schema.cql...' &&
-        cqlsh cassandra -f /config/cassandra/schema.cql &&
+        echo 'Initializing Cassandra schema...' &&
+        cqlsh cassandra -u cassandra -p cassandra -f /init/schema.cql &&
         echo 'Schema initialization complete!'
       "
     networks:
