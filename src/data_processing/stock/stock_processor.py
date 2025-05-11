@@ -3,7 +3,7 @@ from pathlib import Path
 
 from loguru import logger
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import col, from_json
+from pyspark.sql.functions import col, from_json, to_date, avg, sum, when, round
 from pyspark.sql.types import (
     StructType,
     StructField,
@@ -93,13 +93,34 @@ class StockDataProcessor(BaseStreamProcessor):
         Returns:
             DataFrame with computed features
         """
-        # This is a placeholder for technical indicator calculation
-        # In a real implementation, you would add moving averages, RSI, MACD, etc.
         logger.info("Computing stock features")
 
-        # For now, just passing through the validated data
-        # In a production implementation, add your feature calculations here
-        return df
+        # Pass through validated data as-is for the stock_features table
+        stock_features = df
+
+        # Calculate daily statistics for the daily_stock_stats table
+        daily_stats = (
+            df.withColumn("date_only", to_date(col("date")))
+            .groupBy("name", "date_only")
+            .agg(
+                avg((col("high") + col("low")) / 2).alias("avg_price"),
+                sum(col("volume")).alias("volume_sum"),
+                (col("close").first() - col("open").first()).alias("price_change"),
+                round(
+                    (col("close").first() - col("open").first()) / col("open").first() * 100, 2
+                ).alias("percent_change"),
+            )
+            .withColumnRenamed("date_only", "date")
+        )
+
+        # Log daily statistics as a separate Kafka topic for later processing
+        if "kafka" in self.config and "topics" in self.config["kafka"]:
+            stats_topic = self.config["kafka"]["topics"].get("daily_stats", "market_data_daily_stats")
+            self.write_to_kafka(daily_stats, stats_topic)
+            logger.info(f"Daily statistics written to Kafka topic: {stats_topic}")
+
+        # Return the original features for the main Cassandra table
+        return stock_features
 
     def run(self) -> None:
         """Run the stock data processing pipeline."""
@@ -108,8 +129,8 @@ class StockDataProcessor(BaseStreamProcessor):
 
             # Get configuration parameters
             kafka_topic = self.config["kafka"]["topics"]["market_data_raw"]
-            cassandra_keyspace = self.config["cassandra"]["keyspace"]
-            cassandra_table = self.config["cassandra"]["table"]
+            cassandra_keyspace = self.config.get("cassandra", {}).get("keyspace", "market_data")
+            cassandra_table = self.config.get("cassandra", {}).get("table", "stock_features")
 
             # Create a static checkpoint location for the stream to enable resumption
             checkpoint_dir = Path(self.config.get("checkpoint_location_base_path", "/opt/bitnami/spark/checkpoints"))
@@ -119,6 +140,7 @@ class StockDataProcessor(BaseStreamProcessor):
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
             
             logger.info(f"Using checkpoint location: {checkpoint_location}")
+            logger.info(f"Writing data to Cassandra keyspace: {cassandra_keyspace}, table: {cassandra_table}")
 
             # Read data from Kafka
             kafka_stream = self.read_from_kafka(kafka_topic)
