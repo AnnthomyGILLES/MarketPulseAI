@@ -13,15 +13,15 @@ CONSISTENCY LOCAL_QUORUM;
 
 -- Stock features table with time-series data
 CREATE TABLE IF NOT EXISTS stock_features (
-    symbol TEXT,
-    timestamp TIMESTAMP,
-    open DECIMAL,
-    high DECIMAL,
-    low DECIMAL,
-    close DECIMAL,
+    name TEXT,
+    date TIMESTAMP,
+    open DOUBLE,
+    high DOUBLE,
+    low DOUBLE,
+    close DOUBLE,
     volume BIGINT,
-    PRIMARY KEY ((symbol), timestamp)
-) WITH CLUSTERING ORDER BY (timestamp DESC)
+    PRIMARY KEY ((name), date)
+) WITH CLUSTERING ORDER BY (date DESC)
   AND compaction = {'class': 'TimeWindowCompactionStrategy', 
                    'compaction_window_unit': 'DAYS',
                    'compaction_window_size': 7}
@@ -30,21 +30,21 @@ CREATE TABLE IF NOT EXISTS stock_features (
 
 -- Create materialized view for querying by date
 CREATE MATERIALIZED VIEW IF NOT EXISTS stock_features_by_date AS
-    SELECT symbol, timestamp, open, high, low, close, volume
+    SELECT name, date, open, high, low, close, volume
     FROM stock_features
-    WHERE symbol IS NOT NULL AND timestamp IS NOT NULL
-    PRIMARY KEY ((timestamp), symbol);
+    WHERE name IS NOT NULL AND date IS NOT NULL
+    PRIMARY KEY ((date), name);
 
 -- Create daily statistics table
 CREATE TABLE IF NOT EXISTS daily_stock_stats (
     date DATE,
-    symbol TEXT,
-    avg_price DECIMAL,
-    total_volume BIGINT,
-    price_change DECIMAL,
-    percent_change DECIMAL,
-    PRIMARY KEY (date, symbol)
+    name TEXT,
+    avg_price DOUBLE,
+    volume_sum BIGINT,
+    price_change DOUBLE,
+    percent_change DOUBLE,
+    PRIMARY KEY (date, name)
 ) WITH compaction = {'class': 'SizeTieredCompactionStrategy'};
 
 -- Create index for fast lookups on symbol
-CREATE INDEX IF NOT EXISTS ON daily_stock_stats (symbol); 
+CREATE INDEX IF NOT EXISTS idx_daily_stats_name ON daily_stock_stats (name); 
