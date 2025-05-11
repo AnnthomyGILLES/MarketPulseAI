@@ -66,24 +66,47 @@ services:
     volumes:
       - cassandra-data:/var/lib/cassandra
     environment:
-      - CASSANDRA_CLUSTER_NAME=MarketPulse
+      - CASSANDRA_CLUSTER_NAME=market_data_cluster
       - CASSANDRA_ENDPOINT_SNITCH=SimpleSnitch
       - CASSANDRA_DC=datacenter1
-      - CASSANDRA_USER=${CASSANDRA_USER:-cassandra}
-      - CASSANDRA_PASSWORD=${CASSANDRA_PASSWORD:-cassandra}
+      - MAX_HEAP_SIZE=2G
+      - HEAP_NEWSIZE=512M
+      - JVM_OPTS=-Xms1G -Xmx2G -Dcassandra.jmx.local.port=7199
     networks:
       - kafka-network
     healthcheck:
-      test: ["CMD", "cqlsh", "-u", "cassandra", "-p", "cassandra", "-e", "describe keyspaces"]
+      test: [ "CMD", "cqlsh", "-e", "describe keyspaces" ]
       interval: 15s
       timeout: 10s
       retries: 10
+    restart: unless-stopped
     deploy:
       resources:
         limits:
           memory: 4G
         reservations:
           memory: 2G
+
+  cassandra-init:
+    image: cassandra:4.1
+    volumes:
+      - ./config/cassandra:/config/cassandra
+    command: >
+      bash -c "
+        echo 'Waiting for Cassandra to start...' &&
+        until cqlsh cassandra -e 'describe keyspaces'; do
+          echo 'Cassandra not ready yet - retrying...';
+          sleep 5;
+        done &&
+        echo 'Initializing Cassandra schema from schema.cql...' &&
+        cqlsh cassandra -f /config/cassandra/schema.cql &&
+        echo 'Schema initialization complete!'
+      "
+    networks:
+      - kafka-network
+    depends_on:
+      cassandra:
+        condition: service_healthy
 
   redis:
     image: redis:7.2
