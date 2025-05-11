@@ -44,13 +44,16 @@ class StockDataProcessor(BaseStreamProcessor):
         """
         return StructType(
             [
-                StructField("date", TimestampType(), False),
+                StructField("timestamp", TimestampType(), False),
                 StructField("open", DoubleType(), False),
                 StructField("high", DoubleType(), False),
                 StructField("low", DoubleType(), False),
                 StructField("close", DoubleType(), False),
                 StructField("volume", LongType(), False),
-                StructField("Name", StringType(), False),
+                StructField("symbol", StringType(), False),
+                StructField("vwap", DoubleType(), True),
+                StructField("collection_timestamp", TimestampType(), True),
+                StructField("transactions", LongType(), True),
             ]
         )
 
@@ -78,7 +81,7 @@ class StockDataProcessor(BaseStreamProcessor):
                 & col("low").isNotNull()
                 & col("close").isNotNull()
                 & col("volume").isNotNull()
-                & col("Name").isNotNull()
+                & col("symbol").isNotNull()
             )
             .filter(col("high") >= col("low"))
             .filter(col("high") >= col("open"))
@@ -86,7 +89,8 @@ class StockDataProcessor(BaseStreamProcessor):
             .filter(col("low") <= col("open"))
             .filter(col("low") <= col("close"))
             .filter(col("volume") >= 0)
-            .withColumnRenamed("Name", "name")
+            .withColumnRenamed("symbol", "name")
+            .withColumnRenamed("timestamp", "date")
         )
 
         logger.info("Data validation complete")
@@ -224,7 +228,7 @@ class StockDataProcessor(BaseStreamProcessor):
             logger.info("Starting stock data processing pipeline")
 
             # Get configuration parameters
-            kafka_topic = self.config["kafka"]["topics"]["market_data_raw"]
+            kafka_topic = self.config["kafka"]["topics"]["market_data_validated"]
             cassandra_keyspace = self.config.get("cassandra", {}).get(
                 "keyspace", "market_data"
             )
