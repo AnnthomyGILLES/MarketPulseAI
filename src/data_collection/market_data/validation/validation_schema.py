@@ -14,7 +14,7 @@ class MarketDataSchema(BaseModel):
     close: float = Field(..., description="Closing price or current price")
     volume: Optional[int] = Field(None, description="Trading volume")
     vwap: Optional[float] = Field(None, description="Volume weighted average price")
-    timestamp: int | float = Field(..., description="Data timestamp in milliseconds since epoch")
+    timestamp: int | float | str = Field(..., description="Data timestamp in milliseconds since epoch or ISO format")
     collection_timestamp: str = Field(..., description="When data was collected")
     transactions: Optional[int] = Field(None, description="Number of transactions")
 
@@ -27,11 +27,18 @@ class MarketDataSchema(BaseModel):
 
     @field_validator("timestamp")
     @classmethod
-    def validate_timestamp(cls, v: int | float) -> str:
+    def validate_timestamp(cls, v: int | float | str) -> str:
         try:
-            return datetime.fromtimestamp(v / 1000).isoformat()
+            if isinstance(v, (int, float)):
+                return datetime.fromtimestamp(v / 1000).isoformat()
+            elif isinstance(v, str):
+                # Try to parse as ISO format
+                datetime.fromisoformat(v)
+                return v
+            else:
+                raise ValueError("Invalid timestamp type")
         except (ValueError, TypeError):
-            raise ValueError("Invalid timestamp format, expected milliseconds since epoch")
+            raise ValueError("Invalid timestamp format, expected milliseconds since epoch or ISO format")
 
     @field_validator("collection_timestamp")
     @classmethod

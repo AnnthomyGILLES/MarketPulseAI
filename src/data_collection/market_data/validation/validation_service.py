@@ -1,6 +1,5 @@
 # src/data_collection/market_data/validation/validation_service.py
 
-from pathlib import Path
 from typing import Dict, Any, Optional
 
 # Import BaseValidationService and MarketDataValidator
@@ -62,27 +61,6 @@ class MarketDataValidationService(BaseValidationService):
         # validated_data is the dict returned by MarketDataValidator on success
         return validated_data.get("symbol")
 
-    # Methods removed as they are handled by BaseValidationService:
-    # - _setup_kafka_clients
-    # - _kafka_error_callback (using base implementation)
-    # - _update_and_report_stats / _report_stats
-    # - process_message
-    # - run
-    # - stop
-    # - _handle_signal
-    # - _setup_logging
-
 
 if __name__ == "__main__":
-    # Use the base class's run_service method for standalone execution
-    # This automatically handles initialization and the run loop.
-    # It assumes the config file is in the default location or specified via an arg parser (not implemented here)
     MarketDataValidationService.run_service()
-
-    # The old way:
-    # validation_service = MarketDataValidationService()
-    # try:
-    #     validation_service.run()
-    # except KeyboardInterrupt:
-    #     print("Service interrupted by user. Shutting down...")
-    # # Base class handles stop in its finally block
