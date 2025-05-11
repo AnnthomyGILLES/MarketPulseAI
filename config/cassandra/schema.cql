@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS stock_features (
     low DOUBLE,
     close DOUBLE,
     volume BIGINT,
+    vwap DOUBLE,
+    collection_timestamp TIMESTAMP,
+    transactions BIGINT,
     PRIMARY KEY ((name), date)
 ) WITH CLUSTERING ORDER BY (date DESC)
   AND compaction = {'class': 'TimeWindowCompactionStrategy', 
@@ -30,7 +33,7 @@ CREATE TABLE IF NOT EXISTS stock_features (
 
 -- Create materialized view for querying by date
 CREATE MATERIALIZED VIEW IF NOT EXISTS stock_features_by_date AS
-    SELECT name, date, open, high, low, close, volume
+    SELECT name, date, open, high, low, close, volume, vwap, collection_timestamp, transactions
     FROM stock_features
     WHERE name IS NOT NULL AND date IS NOT NULL
     PRIMARY KEY ((date), name);
